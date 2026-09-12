@@ -1936,6 +1936,11 @@
       for (let t = SAMPLE_STEP; t <= sampleSpan; t += SAMPLE_STEP){
         animationState.update(SAMPLE_STEP);
         animationState.apply(skeleton);
+        // Required for the "physics settle into their natural sway" goal described above —
+        // without advancing skeleton.time via skeleton.update(), physics constraints see zero
+        // elapsed time every sampled step and never move at all (see the render-loop comments
+        // near c.skeleton.update(dt) for the full explanation).
+        skeleton.update(SAMPLE_STEP);
         skeleton.updateWorldTransform(spine.Physics.update);
         sampleBounds();
       }
@@ -4421,6 +4426,15 @@
       chars.forEach(c=>{
         c.animationState.update(dt);
         c.animationState.apply(c.skeleton);
+        // THE MISSING PIECE for physics constraints (hair/skirt jiggle) never moving at all: per
+        // Spine 4.2+'s own spec, PhysicsConstraint integrates using skeleton.time, which only
+        // advances via Skeleton#update(delta) — a SEPARATE call from animationState.update(dt)
+        // (which only advances animation track playback, not the skeleton's own physics clock).
+        // This call never existed anywhere in this file, so skeleton.time never moved and every
+        // physics constraint computed zero elapsed time every single frame — indistinguishable
+        // from physics being fully disabled, even though updateWorldTransform(spine.Physics.update)
+        // was being called correctly. Must run every frame, right after animationState.apply().
+        c.skeleton.update(dt);
         // Re-mute the moment any clip's keyframes may have set it non-zero (see
         // muteHeadFollowConstraints for the full "파츠 뜯어짐" root-cause writeup) — must run
         // after apply() (which is what would have re-enabled it) and before
@@ -4685,6 +4699,12 @@
     if (!c){ updateHints(null); return; }
     c.animationState.update(dt);
     c.animationState.apply(c.skeleton);
+    // Same fix as the studio loop — see the comment there for why this call (never present
+    // anywhere in this file before) is required for physics constraints (hair/skirt jiggle) to
+    // do anything at all: it advances skeleton.time, which is what PhysicsConstraint integrates
+    // against. Without it, physics constraints see zero elapsed time every frame and never move,
+    // regardless of updateWorldTransform(spine.Physics.update) being called correctly below.
+    c.skeleton.update(dt);
     // Same re-mute as the studio render loop — see muteHeadFollowConstraints for why this has to
     // run every frame, after apply() and before updateWorldTransform().
     muteHeadFollowConstraints(c.skeleton);
