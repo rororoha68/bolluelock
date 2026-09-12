@@ -2790,6 +2790,13 @@
       motionSelect.value = slot.animName || c.defaultAnimation || '';
       motionSelect.addEventListener('change', ()=>{
         slot.animName = motionSelect.value;
+        // Pin physics for this crossfade exactly like a pointer-triggered reaction does (see
+        // pinReactionPhysics/REACTION_PIN_MS) — without this, switching motions here blends the
+        // old and new animation's pose over animationStateData.defaultMix (0.25s) same as any
+        // other track-0 swap, and a jiggle-bone spring (back hair) reads that blend as a huge
+        // per-frame velocity and flings itself away ("뒷머리 찢어짐") instead of just cutting over
+        // cleanly. This dropdown was the one track-0-swap call site that never pinned.
+        pinReactionPhysics(c);
         c.animationState.setAnimation(0, motionSelect.value, true);
         c.restingAnimation = {name: motionSelect.value, loop: true};
       });
@@ -2958,6 +2965,9 @@
   animList.addEventListener('change', ()=>{
     const c = loadedCharacters.get(activeId);
     if (!c) return;
+    // Same physics-pin fix as the studio motion dropdown (see the comment there) — this manual
+    // picker is also a track-0 animation swap and needs its crossfade pinned too.
+    pinReactionPhysics(c);
     c.animationState.setAnimation(0, animList.value, loopToggle.checked);
     c.restingAnimation = {name: animList.value, loop: loopToggle.checked};
   });
