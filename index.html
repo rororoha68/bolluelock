@@ -4135,18 +4135,23 @@
   const FOLLOW_MIX_X = 0.035;
   const FOLLOW_MIX_Y = 0.02;
   const FOLLOW_MAX_Y = 0.02;
-  function applyManualFollow(c, sourceName, off){
+  // Computes this drag's manual-follow contribution in WORLD space and stashes it on the
+  // character, keyed by source bone, for applyManualFollowWorldOverride() to apply once
+  // updateWorldTransform() has fully finished for this frame — see that function for why this
+  // can't just write to the target bones' local pose here (that used to be tried, and only ever
+  // visibly worked for 'backhead'; head/face/hear stayed put).
+  function stashManualFollow(c, sourceName, off){
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
     // off.x/off.y are already in the DRAGGED bone's local (parent-relative) frame — see the
     // pointermove handler that builds `off` via boneWorldMatrix(bone.parent). FOLLOW_MIX_X/
     // FOLLOW_MIX_Y/FOLLOW_MAX_Y are meant to mean "sideways" and "up/down" on SCREEN, so this
-    // first converts the offset into world space using the SOURCE bone's own parent matrix.
+    // converts the offset into world space using the SOURCE bone's own parent matrix.
     const sourceBone = c.skeleton.findBone(sourceName);
-    const sourceParentMatrix = sourceBone && boneWorldMatrix(sourceBone.parent);
+    const parentMatrix = sourceBone && boneWorldMatrix(sourceBone.parent);
     let worldDx = off.x, worldDy = off.y;
-    if (sourceParentMatrix){
-      const {a, b, c: cc, d} = sourceParentMatrix;
+    if (parentMatrix){
+      const {a, b, c: cc, d} = parentMatrix;
       worldDx = a*off.x + b*off.y;
       worldDy = cc*off.x + d*off.y;
     }
@@ -4154,42 +4159,47 @@
     let worldFy = worldDy * FOLLOW_MIX_Y;
     if (worldFy > FOLLOW_MAX_Y) worldFy = FOLLOW_MAX_Y;
     else if (worldFy < -FOLLOW_MAX_Y) worldFy = -FOLLOW_MAX_Y;
-    targets.forEach(targetName=>{
-      const bone = c.skeleton.findBone(targetName);
-      if (!bone) return;
-      // Convert the screen-correct sideways/vertical amounts back into THIS TARGET's own local
-      // frame, using ITS OWN parent's matrix — not the source bone's. head/face/backhead/hear
-      // don't all share one common parent (only backhead happens to share atama/cheek's parent),
-      // so reusing the source's parent matrix for every target silently mangled the vertical
-      // component for whichever targets have a differently-rotated parent: it looked like only
-      // backhead was "following" vertically while head/face/hear stayed put, even though the
-      // world-space offset being fed in was identical for all four.
-      const targetParentMatrix = boneWorldMatrix(bone.parent);
-      let localFx = worldFx, localFy = worldFy;
-      if (targetParentMatrix){
-        const {a, b, c: cc, d} = targetParentMatrix;
-        const det = a*d - b*cc;
-        if (Math.abs(det) > 1e-9){
-          const invDet = 1/det;
-          localFx = (worldFx*d - worldFy*b) * invDet;
-          localFy = (worldFy*a - worldFx*cc) * invDet;
+    if (!c.__pendingFollow) c.__pendingFollow = new Map();
+    c.__pendingFollow.set(sourceName, {targets, worldFx, worldFy, off});
+  }
+  // THE ACTUAL FIX for "only backhead follows, head/face/hear don't move vertically at all":
+  // head/face/backhead/hear all still have their (muted, but apparently not fully inert on this
+  // pinned spine-webgl 4.3.13 build) atama/cheek-to-* transform constraints wired to them, and
+  // constraint resolution runs *inside* updateWorldTransform() itself — same root cause already
+  // documented for the studio rotation slider below ("setting root.rotation before
+  // updateWorldTransform() silently did nothing... constraint resolution runs *inside*
+  // updateWorldTransform() itself, after local bone values are set"). Writing the follow offset
+  // to these bones' local pose *before* updateWorldTransform (as this used to do) got silently
+  // recomputed/overridden for whichever targets that build's constraint math actually still
+  // touches despite mix:0 — apparently every one of the four except backhead, which is why only
+  // backhead ever visibly moved. Applying the offset directly to each target's already-finished
+  // WORLD position, AFTER updateWorldTransform() has run, means there's no more constraint/
+  // animation logic left this frame that could overwrite it.
+  function applyManualFollowWorldOverride(c){
+    if (!c.__pendingFollow || c.__pendingFollow.size === 0) return;
+    c.__pendingFollow.forEach(({targets, worldFx, worldFy, off})=>{
+      targets.forEach(targetName=>{
+        const bone = c.skeleton.findBone(targetName);
+        if (!bone) return;
+        // 4.3: world transform lives on bone.appliedPose, not the bare bone object — same story
+        // as the studioRotation code below.
+        const bSrc = (bone.appliedPose && Number.isFinite(bone.appliedPose.worldX)) ? bone.appliedPose : bone;
+        if (!Number.isFinite(bSrc.worldX) || !Number.isFinite(bSrc.worldY)) return;
+        let base = c.followBases.get(targetName);
+        if (!base){
+          base = {x: bSrc.worldX, y: bSrc.worldY};
+          c.followBases.set(targetName, base);
         }
-      }
-      let base = c.followBases.get(targetName);
-      if (!base){
-        const p = bonePose(bone);
-        base = {x: p.x, y: p.y};
-        c.followBases.set(targetName, base);
-      }
-      const pose = bonePose(bone);
-      pose.x = base.x + localFx;
-      pose.y = base.y + localFy;
-      // Once fully settled back near zero, drop the captured base so the next drag re-snapshots
-      // fresh (in case idle animation moved this bone in the meantime).
-      if (!off.dragging && Math.abs(off.x) < 0.05 && Math.abs(off.y) < 0.05){
-        c.followBases.delete(targetName);
-      }
+        bSrc.worldX = base.x + worldFx;
+        bSrc.worldY = base.y + worldFy;
+        // Once fully settled back near zero, drop the captured base so the next drag re-snapshots
+        // fresh (in case idle animation moved this bone in the meantime).
+        if (!off.dragging && Math.abs(off.x) < 0.05 && Math.abs(off.y) < 0.05){
+          c.followBases.delete(targetName);
+        }
+      });
     });
+    c.__pendingFollow.clear();
   }
 
   function applyProceduralEffects(c, dt){
@@ -4211,18 +4221,11 @@
         off.x += off.vx*dt; off.y += off.vy*dt;
         if (Math.abs(off.x) < 0.05 && Math.abs(off.y) < 0.05 && Math.abs(off.vx) < 0.05 && Math.abs(off.vy) < 0.05){
           c.offsets.delete(boneName);
-          // Settled fully back to rest — snap any follow targets back to their captured base too
-          // (off is ~0 already so this is a no-op in practice, just avoids a stale tiny residual)
-          // and clear their bases so the next drag re-snapshots from a fresh pose.
-          (FOLLOW_MAP[boneName] || []).forEach(targetName=>{
-            const base = c.followBases.get(targetName);
-            const targetBone = c.skeleton.findBone(targetName);
-            if (base && targetBone){
-              const p = bonePose(targetBone);
-              p.x = base.x; p.y = base.y;
-            }
-            c.followBases.delete(targetName);
-          });
+          // Settled fully back to rest — nothing left to stash this frame (see below), so
+          // applyManualFollowWorldOverride() simply won't touch these targets anymore and they
+          // fall back to whatever updateWorldTransform() naturally computes for them. Just clear
+          // the captured world-position bases so the next drag re-snapshots fresh.
+          (FOLLOW_MAP[boneName] || []).forEach(targetName=> c.followBases.delete(targetName));
           return;
         }
       }
@@ -4235,7 +4238,7 @@
       const pose = bonePose(bone);
       pose.x = off.baseX + off.x;
       pose.y = off.baseY + off.y;
-      applyManualFollow(c, boneName, off);
+      stashManualFollow(c, boneName, off);
     });
     const now = performance.now();
     c.patEffects.forEach((eff, boneName)=>{
@@ -4603,6 +4606,12 @@
             c.skeleton.updateWorldTransform(spine.Physics.reset);
           }
         }
+        // Manual head/cheek-follow (see stashManualFollow/applyManualFollowWorldOverride above):
+        // must run after every updateWorldTransform/recompute pass above this point (including
+        // the runaway-bone and NaN-recovery safety nets), but before studioRotation just below,
+        // so a rotated studio character's follow offset gets rotated along with everything else
+        // instead of being computed pre-rotation and then left behind.
+        applyManualFollowWorldOverride(c);
         // Studio rotation slider: NOT applied as a root-bone rotation (tried that first — see the
         // git history for the old approach). Setting root.rotation before updateWorldTransform()
         // silently did nothing on every rig: this skeleton's bones are driven by IK/transform
@@ -4681,6 +4690,9 @@
     muteHeadFollowConstraints(c.skeleton);
     applyProceduralEffects(c, dt);
     c.skeleton.updateWorldTransform(spine.Physics.update);
+    // Must run after updateWorldTransform — see applyManualFollowWorldOverride's own comment for
+    // why writing this earlier (before updateWorldTransform) doesn't reliably stick.
+    applyManualFollowWorldOverride(c);
     updateHitAnchors(c);
 
     renderer.begin();
