@@ -2040,6 +2040,11 @@
         // spine-webgl 4.3.13 transform-constraint implementation for the "atama/cheek drag also
         // nudges head/face/backhead/hear a little" effect.
         followBases: new Map(),
+        // Editor-authored mixX/mixY per head/cheek-follow constraint (atama-to-head,
+        // cheek-to-face, ...) — see getHeadFollowMixTable(). applyManualFollow uses these exact
+        // values instead of a single guessed constant, so the manual reimplementation matches
+        // what the animator actually set up in Spine, not an approximation.
+        followMixTable: getHeadFollowMixTable(skeleton),
         // Stable, "settled" world position per interactive bone, used for hit-testing and hint
         // dots instead of the bone's live (possibly mid-animation) position. Without this, tapping
         // the head to trigger the hit reaction — whether the dedicated Spine clip or the procedural
@@ -3124,6 +3129,30 @@
     });
   }
 
+  // Reads the ACTUAL editor-authored mixX/mixY for each of the 8 head/cheek-follow constraints
+  // straight off c.data (the constraint's static design-time data, never touched by
+  // muteHeadFollowConstraints — that only zeroes the *live* pose/appliedPose fields, so .data is
+  // always the untouched original value from the .json/.skel export). Used so the manual JS
+  // follow below reproduces the editor's own per-target strength (e.g. atama-to-head might be
+  // authored stronger than atama-to-hear) instead of one guessed constant applied to every
+  // target equally. Keyed by the constraint's own name ("atama-to-head", "cheek-to-face", ...)
+  // so applyManualFollow can look up sourceName+'-to-'+targetName directly.
+  function getHeadFollowMixTable(skeleton){
+    const all = [].concat(
+      Array.isArray(skeleton.constraints) ? skeleton.constraints : [],
+      Array.isArray(skeleton.transformConstraints) ? skeleton.transformConstraints : []
+    );
+    const table = new Map();
+    all.forEach(c => {
+      if (!c || !c.data || !HEAD_FOLLOW_CONSTRAINT_NAMES.includes(c.data.name)) return;
+      table.set(c.data.name, {
+        mixX: Number.isFinite(c.data.mixX) ? c.data.mixX : 1,
+        mixY: Number.isFinite(c.data.mixY) ? c.data.mixY : 1
+      });
+    });
+    return table;
+  }
+
   // Finds every PhysicsConstraint (jiggle-bone spring) on a skeleton, regardless of which array
   // shape this runtime build exposes them under (some builds group constraints by type under
   // skeleton.physicsConstraints, others only expose a single mixed skeleton.constraints list —
@@ -4122,32 +4151,25 @@
   // targets as cheek) makes petting actually nudge them the way the editor's own (broken, muted)
   // constraint was meant to.
   const FOLLOW_MAP = { atama: ['head','face','backhead','hear'], cheek: ['head','face','backhead','hear'] };
-  const FOLLOW_MIX_X = 0.035;
-  // Vertical follow: previously mixX=0.001 AND the cap were both ~0.001, meaning any drag
-  // distance got clamped down to a practically invisible sub-pixel amount — vertical follow was
-  // structurally disabled regardless of how far atama/cheek moved, not just "weak". Raised both
-  // so vertical motion is actually visible, while still keeping a real cap (smaller than the
-  // horizontal mix) so dragging straight up can't pull head far enough to expose a neck gap.
-  // These two numbers are the ones to hand-tune per rig if it still looks too strong/weak or the
-  // neck gap reappears — FOLLOW_MIX_Y controls how much of the drag turns into vertical motion,
-  // FOLLOW_MAX_Y is the hard ceiling on how far that's allowed to go regardless of mix.
-  const FOLLOW_MIX_Y = 0.02;
-  const FOLLOW_MAX_Y = 6;
+  // Fallback only, used if a particular sourceName-to-targetName constraint isn't found in
+  // c.followMixTable (e.g. a character export that's missing one of the 8 named constraints).
+  // Real strength for every normal case comes from getHeadFollowMixTable()/c.followMixTable —
+  // the exact mixX/mixY the animator authored in Spine for each constraint — not a guess.
+  const FOLLOW_MIX_FALLBACK = 1;
   function applyManualFollow(c, sourceName, off){
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
     // off.x/off.y are already in the DRAGGED bone's local (parent-relative) frame — see the
     // pointermove handler that builds `off` via boneWorldMatrix(bone.parent). Follow targets
     // (face/backhead/hear) share that same parent, so the numbers are valid to reuse directly...
-    // but FOLLOW_MIX_X/FOLLOW_MIX_Y/FOLLOW_MAX_Y below are meant to mean "sideways" and "up/down"
-    // on SCREEN, not "this bone's local x/y". On a rig where the head's parent chain carries close
-    // to a 90°/100° cumulative rotation (as on this character), local x ends up pointing almost
-    // straight up/down on screen and local y almost straight sideways — so the tiny FOLLOW_MAX_Y
-    // clamp meant to suppress vertical drift was actually suppressing sideways drift, while the
-    // generous FOLLOW_MIX_X was landing on the vertical axis instead, making the head visibly
-    // lift far more than the source pet animation itself does (more than what shows in the Spine
-    // editor, which has no follow logic at all). Converting to world space first and splitting
-    // sideways/vertical there makes the mix behave the same regardless of a given rig's rotation.
+    // but a Spine TransformConstraint's mixX/mixY are defined in WORLD space, not "this bone's
+    // local x/y". On a rig where the head's parent chain carries close to a 90°/100° cumulative
+    // rotation (as on this character), local x ends up pointing almost straight up/down on
+    // screen and local y almost straight sideways — applying mixX/mixY straight to local x/y
+    // would put the editor's "sideways" strength on the vertical axis and vice versa. Converting
+    // to world space first, applying each target's own mixX/mixY there, then converting back
+    // makes the constraint behave the same as it would in the editor regardless of the rig's
+    // rotation.
     const sourceBone = c.skeleton.findBone(sourceName);
     const parentMatrix = sourceBone && boneWorldMatrix(sourceBone.parent);
     let worldDx = off.x, worldDy = off.y;
@@ -4156,25 +4178,27 @@
       worldDx = a*off.x + b*off.y;
       worldDy = cc*off.x + d*off.y;
     }
-    let worldFx = worldDx * FOLLOW_MIX_X;
-    let worldFy = worldDy * FOLLOW_MIX_Y;
-    if (worldFy > FOLLOW_MAX_Y) worldFy = FOLLOW_MAX_Y;
-    else if (worldFy < -FOLLOW_MAX_Y) worldFy = -FOLLOW_MAX_Y;
-    // Convert the now screen-correct sideways/vertical amounts back into the shared local frame
-    // (same parent as sourceBone, same matrix) before writing them onto each follow target's pose.
-    let localFx = worldFx, localFy = worldFy;
-    if (parentMatrix){
-      const {a, b, c: cc, d} = parentMatrix;
-      const det = a*d - b*cc;
-      if (Math.abs(det) > 1e-9){
+    const det = parentMatrix ? (parentMatrix.a*parentMatrix.d - parentMatrix.b*parentMatrix.c) : 1;
+    targets.forEach(targetName=>{
+      const bone = c.skeleton.findBone(targetName);
+      if (!bone) return;
+      // Each target gets ITS OWN mixX/mixY — exactly what the animator set for e.g.
+      // "atama-to-head" vs. "atama-to-hear" in the editor, rather than one shared strength
+      // applied uniformly to every target.
+      const mixEntry = c.followMixTable && c.followMixTable.get(sourceName + '-to-' + targetName);
+      const mixX = mixEntry ? mixEntry.mixX : FOLLOW_MIX_FALLBACK;
+      const mixY = mixEntry ? mixEntry.mixY : FOLLOW_MIX_FALLBACK;
+      const worldFx = worldDx * mixX;
+      const worldFy = worldDy * mixY;
+      // Convert this target's screen-correct sideways/vertical amount back into the shared
+      // local frame (same parent as sourceBone, same matrix) before writing it onto its pose.
+      let localFx = worldFx, localFy = worldFy;
+      if (parentMatrix && Math.abs(det) > 1e-9){
+        const {a, b, c: cc, d} = parentMatrix;
         const invDet = 1/det;
         localFx = (worldFx*d - worldFy*b) * invDet;
         localFy = (worldFy*a - worldFx*cc) * invDet;
       }
-    }
-    targets.forEach(targetName=>{
-      const bone = c.skeleton.findBone(targetName);
-      if (!bone) return;
       let base = c.followBases.get(targetName);
       if (!base){
         const p = bonePose(bone);
