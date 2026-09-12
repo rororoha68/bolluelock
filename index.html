@@ -4123,12 +4123,16 @@
   // constraint was meant to.
   const FOLLOW_MAP = { atama: ['head','face','backhead','hear'], cheek: ['head','face','backhead','hear'] };
   const FOLLOW_MIX_X = 0.035;
-  // Vertical follow kept separate and clamped: dragging atama upward was lifting 'head' enough
-  // to visibly expose a gap at the neck, since head's own art doesn't stretch to cover it. A
-  // much weaker mix plus a hard cap keeps the wobble readable without ever pulling head far
-  // enough off the body to look disconnected.
-  const FOLLOW_MIX_Y = 0.001;
-  const FOLLOW_MAX_Y = 0.001;
+  // Vertical follow: previously mixX=0.001 AND the cap were both ~0.001, meaning any drag
+  // distance got clamped down to a practically invisible sub-pixel amount — vertical follow was
+  // structurally disabled regardless of how far atama/cheek moved, not just "weak". Raised both
+  // so vertical motion is actually visible, while still keeping a real cap (smaller than the
+  // horizontal mix) so dragging straight up can't pull head far enough to expose a neck gap.
+  // These two numbers are the ones to hand-tune per rig if it still looks too strong/weak or the
+  // neck gap reappears — FOLLOW_MIX_Y controls how much of the drag turns into vertical motion,
+  // FOLLOW_MAX_Y is the hard ceiling on how far that's allowed to go regardless of mix.
+  const FOLLOW_MIX_Y = 0.02;
+  const FOLLOW_MAX_Y = 6;
   function applyManualFollow(c, sourceName, off){
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
