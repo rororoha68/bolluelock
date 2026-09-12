@@ -4114,22 +4114,19 @@
   // this instead reproduces just the intended visual — head/face/backhead/hear drifting a little
   // in the same direction as whichever bone (atama or cheek) is being dragged — entirely in local
   // bone-space offsets we control, with a fixed, safe strength.
-  // atama now also gets a follow entry (previously omitted on the assumption that the dedicated
-  // pet Spine clip already covers this — but atama is dragged directly, independent of that clip,
-  // and is expected to get the same head/face/backhead/hear follow that cheek already gets).
-  const FOLLOW_MAP = { cheek: ['head','face','backhead','hear'], atama: ['head','face','backhead','hear'] };
+  // atama (head pet) intentionally has no entry here anymore: pet has its own dedicated Spine
+  // animation clip, so this manual follow was purely an extra on-screen nudge layered on top of
+  // it — not something that exists in the editor. Removed so the pet reaction now matches the
+  // editor's animation exactly. cheek keeps it: cheek "pull" has no dedicated clip, just the
+  // spring offset, so face/backhead/hear following it is the only visual feedback it has.
+  const FOLLOW_MAP = { cheek: ['head','face','backhead','hear'] };
   const FOLLOW_MIX_X = 0.035;
-  // Vertical follow kept separate and clamped: a generous vertical mix was lifting 'head' enough
-  // to visibly expose a gap at the neck, since head's own art doesn't stretch to cover it.
-  // NOTE: this used to be nerfed all the way down to 0.001 mix / 0.001 clamp — small enough,
-  // relative to FOLLOW_MIX_X (0.035), that it read as "vertical follow doesn't work at all"
-  // (left/right moved the constraint fine, up/down never visibly did, regardless of how far atama/
-  // cheek were dragged). Restored to a real, visible mix. The clamp is now expressed as a fraction
-  // of the character's own bounding height (c.bounds.h, read inside applyManualFollow) instead of
-  // a fixed absolute number, so "how far is too far before it looks disconnected" scales with the
-  // character's size instead of being hand-tuned for one specific rig's pixel scale.
-  const FOLLOW_MIX_Y = 0.028;
-  const FOLLOW_MAX_Y_RATIO = 0.028; // vertical drift capped to ~2.8% of the character's bounding height
+  // Vertical follow kept separate and clamped: dragging atama upward was lifting 'head' enough
+  // to visibly expose a gap at the neck, since head's own art doesn't stretch to cover it. A
+  // much weaker mix plus a hard cap keeps the wobble readable without ever pulling head far
+  // enough off the body to look disconnected.
+  const FOLLOW_MIX_Y = 0.001;
+  const FOLLOW_MAX_Y = 0.001;
   function applyManualFollow(c, sourceName, off){
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
@@ -4155,13 +4152,8 @@
     }
     let worldFx = worldDx * FOLLOW_MIX_X;
     let worldFy = worldDy * FOLLOW_MIX_Y;
-    // Absolute cap derived from this character's own bounding height rather than a fixed magic
-    // number — see the FOLLOW_MAX_Y_RATIO comment above. Falls back to a small fixed value if
-    // bounds aren't available yet for some reason, so this never silently no-ops like the old
-    // 0.001 constant did.
-    const followMaxY = (c.bounds && c.bounds.h) ? c.bounds.h * FOLLOW_MAX_Y_RATIO : 20;
-    if (worldFy > followMaxY) worldFy = followMaxY;
-    else if (worldFy < -followMaxY) worldFy = -followMaxY;
+    if (worldFy > FOLLOW_MAX_Y) worldFy = FOLLOW_MAX_Y;
+    else if (worldFy < -FOLLOW_MAX_Y) worldFy = -FOLLOW_MAX_Y;
     // Convert the now screen-correct sideways/vertical amounts back into the shared local frame
     // (same parent as sourceBone, same matrix) before writing them onto each follow target's pose.
     let localFx = worldFx, localFy = worldFy;
