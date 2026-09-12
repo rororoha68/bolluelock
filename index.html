@@ -4114,39 +4114,38 @@
   // this instead reproduces just the intended visual — head/face/backhead/hear drifting a little
   // in the same direction as whichever bone (atama or cheek) is being dragged — entirely in local
   // bone-space offsets we control, with a fixed, safe strength.
-  // atama (head pet) needs the same manual follow as cheek: the pointermove handler for the pet
-  // hold-drag (see the "Also start tracking a real positional drag offset for the petted bone"
-  // comment above, around c.offsets.set(gesture.boneName, off)) explicitly builds this bone's
-  // offset "purely so head/face/backhead/hear have something to follow" — but FOLLOW_MAP used to
-  // have no 'atama' entry, so applyManualFollow() below returned immediately (targets undefined)
-  // for every pet drag and silently did nothing. That's why only backhead ever appeared to
-  // follow (it happens to be keyframed directly inside the pet_idle clip itself, independent of
-  // this follow logic) while head/face/hear — which rely entirely on this manual follow, since
-  // the native transform constraint driving them is permanently muted (see
-  // muteHeadFollowConstraints) — never moved at all. Restoring the 'atama' entry here (same
-  // targets as cheek) makes petting actually nudge them the way the editor's own (broken, muted)
-  // constraint was meant to.
-  const FOLLOW_MAP = { atama: ['head','face','backhead','hear'], cheek: ['head','face','backhead','hear'] };
-  // Sideways (X) vs. vertical (Y) kept as separate strengths, not one shared constant: dragging
-  // atama upward with too generous a vertical mix visibly exposed a neck gap (head's art doesn't
-  // stretch to cover it), so vertical has its own (larger than the original 0.02, which was too
-  // weak to be visible on head/face/hear once converted into each target's own local frame —
-  // see the per-target parent-matrix note below) strength and its own clamp.
+  // atama (head pet) intentionally has no entry here: pet has its own dedicated Spine animation
+  // clip, so a manual follow on top of it would just be an extra on-screen nudge that doesn't
+  // exist in the editor. cheek keeps it: cheek "pull" has no dedicated clip, just the spring
+  // offset, so face/backhead/hear following it is the only visual feedback it has.
+  const FOLLOW_MAP = { cheek: ['head','face','backhead','hear'] };
   const FOLLOW_MIX_X = 0.035;
-  const FOLLOW_MIX_Y = 0.09;
-  const FOLLOW_MAX_Y = 0.09;
+  // Vertical follow kept separate and clamped: a generous vertical mix was lifting 'head' enough
+  // to visibly expose a gap at the neck, since head's own art doesn't stretch to cover it. A much
+  // weaker mix plus a hard cap keeps the wobble readable without ever pulling head far enough off
+  // the body to look disconnected.
+  const FOLLOW_MIX_Y = 0.001;
+  const FOLLOW_MAX_Y = 0.001;
   function applyManualFollow(c, sourceName, off){
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
     // off.x/off.y are already in the DRAGGED bone's local (parent-relative) frame — see the
-    // pointermove handler that builds `off` via boneWorldMatrix(bone.parent). FOLLOW_MIX_X/
-    // FOLLOW_MIX_Y/FOLLOW_MAX_Y are meant to mean "sideways" and "up/down" on SCREEN, so this
-    // first converts the offset into world space using the SOURCE bone's own parent matrix.
+    // pointermove handler that builds `off` via boneWorldMatrix(bone.parent). Follow targets
+    // (face/backhead/hear) share that same parent, so the numbers are valid to reuse directly...
+    // but FOLLOW_MIX_X/FOLLOW_MIX_Y/FOLLOW_MAX_Y below are meant to mean "sideways" and "up/down"
+    // on SCREEN, not "this bone's local x/y". On a rig where the head's parent chain carries close
+    // to a 90°/100° cumulative rotation (as on this character), local x ends up pointing almost
+    // straight up/down on screen and local y almost straight sideways — so the tiny FOLLOW_MAX_Y
+    // clamp meant to suppress vertical drift was actually suppressing sideways drift, while the
+    // generous FOLLOW_MIX_X was landing on the vertical axis instead, making the head visibly
+    // lift far more than the source pet animation itself does (more than what shows in the Spine
+    // editor, which has no follow logic at all). Converting to world space first and splitting
+    // sideways/vertical there makes the mix behave the same regardless of a given rig's rotation.
     const sourceBone = c.skeleton.findBone(sourceName);
-    const sourceParentMatrix = sourceBone && boneWorldMatrix(sourceBone.parent);
+    const parentMatrix = sourceBone && boneWorldMatrix(sourceBone.parent);
     let worldDx = off.x, worldDy = off.y;
-    if (sourceParentMatrix){
-      const {a, b, c: cc, d} = sourceParentMatrix;
+    if (parentMatrix){
+      const {a, b, c: cc, d} = parentMatrix;
       worldDx = a*off.x + b*off.y;
       worldDy = cc*off.x + d*off.y;
     }
@@ -4154,23 +4153,21 @@
     let worldFy = worldDy * FOLLOW_MIX_Y;
     if (worldFy > FOLLOW_MAX_Y) worldFy = FOLLOW_MAX_Y;
     else if (worldFy < -FOLLOW_MAX_Y) worldFy = -FOLLOW_MAX_Y;
+    // Convert the now screen-correct sideways/vertical amounts back into the shared local frame
+    // (same parent as sourceBone, same matrix) before writing them onto each follow target's pose.
+    let localFx = worldFx, localFy = worldFy;
+    if (parentMatrix){
+      const {a, b, c: cc, d} = parentMatrix;
+      const det = a*d - b*cc;
+      if (Math.abs(det) > 1e-9){
+        const invDet = 1/det;
+        localFx = (worldFx*d - worldFy*b) * invDet;
+        localFy = (worldFy*a - worldFx*cc) * invDet;
+      }
+    }
     targets.forEach(targetName=>{
       const bone = c.skeleton.findBone(targetName);
       if (!bone) return;
-      // Convert the screen-correct sideways/vertical amounts back into THIS TARGET's own local
-      // frame, using ITS OWN parent's matrix — not the source bone's, since head/face/backhead/
-      // hear don't all share one common parent.
-      const targetParentMatrix = boneWorldMatrix(bone.parent);
-      let localFx = worldFx, localFy = worldFy;
-      if (targetParentMatrix){
-        const {a, b, c: cc, d} = targetParentMatrix;
-        const det = a*d - b*cc;
-        if (Math.abs(det) > 1e-9){
-          const invDet = 1/det;
-          localFx = (worldFx*d - worldFy*b) * invDet;
-          localFy = (worldFy*a - worldFx*cc) * invDet;
-        }
-      }
       let base = c.followBases.get(targetName);
       if (!base){
         const p = bonePose(bone);
