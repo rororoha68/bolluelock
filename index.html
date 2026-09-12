@@ -687,6 +687,18 @@
   let slotDrag = null;   // active studio-only drag that repositions a whole placed character (grabbed on its body, not an interactive bone)
   let bgDrag = null;     // active studio-only drag that repositions the background image layer itself (starts outside every placed character), independent of the stage camera and every character's position
   const activePointers = new Map(); // pointerId -> {x, y}, tracked to detect a second touch (pinch)
+  // How long (ms) a reaction-triggered animation swap keeps a character's physics bones pinned
+  // rigid — see the comment on animationStateData.defaultMix above for why this has to cover the
+  // *whole* crossfade, not just one frame. 250ms mix + a small safety margin for a late/slow
+  // frame right at the tail end of the mix to still land inside the pinned window.
+  const REACTION_PIN_MS = 400;
+  // Called from playReaction/startHoldReaction/stopHoldReaction, everywhere a track-0 animation
+  // swap happens for this character. Stamps a wall-clock deadline instead of a one-shot boolean
+  // flag so the render loop can keep physics pinned for the swap's entire crossfade window (see
+  // isDragPinned in renderLoop) no matter how many frames that takes.
+  function pinReactionPhysics(c){
+    c.__reactionPinnedUntil = performance.now() + REACTION_PIN_MS;
+  }
   // Scratch vectors reused every frame by the studio's "runaway bone" safety net below — see
   // that check, next to c.skeleton.updateWorldTransform() in renderLoop, for what it's for.
   const __runawayBoundsOffset = new spine.Vector2(), __runawayBoundsSize = new spine.Vector2();
@@ -1731,6 +1743,21 @@
 
       const animationStateData = new spine.AnimationStateData(skeletonData);
       animationStateData.defaultMix = 0.25; // crossfade between any two animations for smoother transitions
+      // How long a track-0 animation swap (playReaction/startHoldReaction/stopHoldReaction) keeps
+      // this character's physics-constraint bones pinned rigid — see REACTION_PIN_MS/pinReaction()
+      // below for why a single frame isn't enough here: with defaultMix=0.25 above, "hit"/"pet"
+      // don't replace idle's pose instantly, they crossfade into it over a quarter second. If
+      // idle keeps keying a physics-driven bone's *parent* differently from the reaction clip
+      // (this rig's idle sway does), every one of those ~15 blended frames moves that parent a
+      // little further from where physics last expected it, and a spring reads each of those as
+      // a fresh, large per-frame velocity — the divergence compounds across the whole crossfade
+      // instead of happening once. A single Physics.reset on frame 1 (the old c.__justReacted
+      // flag) caught only the first of those frames and left the rest of the mix free to blow the
+      // spring out — exactly the still-broken behavior on video. Holding physics rigid for the
+      // *entire* mix, the same way a manual body-drag is held rigid for its entire duration (see
+      // c.__slotDragActive), is the fix: nothing physics-driven moves relative to its parent
+      // while the pose itself is in motion, and normal jiggle resumes the instant the crossfade
+      // (and this pin) ends.
       const animationState = new spine.AnimationState(animationStateData);
       const defaultAnim = entry.defaultAnimation && skeletonData.findAnimation(entry.defaultAnimation)
         ? entry.defaultAnimation
@@ -3784,9 +3811,9 @@
     // right now — see the comment on restingAnimation for why reading the live track is unsafe.
     const backTo = c.restingAnimation ? c.restingAnimation.name : (c.skeletonData.animations[0] ? c.skeletonData.animations[0].name : null);
     const wasLoop = c.restingAnimation ? c.restingAnimation.loop : true;
-    // Same instant pose-teleport as playReaction's setAnimation call above — see the comment
-    // there for why this needs c.__justReacted too.
-    c.__justReacted = true;
+    // Same crossfade-teleport as playReaction's setAnimation call above — see the comment on
+    // animationStateData.defaultMix for why this needs the full-duration pin, not a single frame.
+    pinReactionPhysics(c);
     c.animationState.setAnimation(0, reaction.primary, true); // loop while held, instead of playReaction's one-shot
     c.activeHolds.set(boneName, {backTo, wasLoop, followUp: reaction.followUp});
   }
@@ -3795,9 +3822,10 @@
     const hold = c.activeHolds.get(boneName);
     if (!hold) return;
     c.activeHolds.delete(boneName);
-    // Same instant pose-teleport as playReaction's setAnimation call — see that comment for why
-    // this needs c.__justReacted too, whichever branch below actually runs.
-    c.__justReacted = true;
+    // Same crossfade-teleport as playReaction's setAnimation call — see the comment on
+    // animationStateData.defaultMix for why this needs the full-duration pin, whichever branch
+    // below actually runs.
+    pinReactionPhysics(c);
     if (hold.followUp){
       c.animationState.setAnimation(0, hold.followUp, false);
       if (hold.backTo) c.animationState.addAnimation(0, hold.backTo, hold.wasLoop, 0);
@@ -3877,18 +3905,18 @@
     if (reaction && reaction.primary){
       c.reactionBusy = true;
       // Same "teleport" problem as a manual body-drag (see c.__justRepositioned in
-      // layoutStudioSlots / c.__slotDragActive in renderLoop), just triggered a different way:
-      // setAnimation() on track 0 instantly swaps this character's pose from wherever idle
-      // happened to be to reaction.primary's first frame, with no interpolation. Any bone
-      // upstream of a physics constraint (tail root, hair root, ...) that lands somewhere
-      // meaningfully different between those two poses moves that whole distance in a single
-      // frame, which Spine's physics constraints read as an enormous one-frame velocity — the
-      // exact mechanism that was already fixed for drag teleports, just never wired up for
-      // reaction/animation teleports. c.__justReacted below feeds this character into the same
-      // Physics.reset + setPhysicsConstraintsMuted + rigid-recompute path for one frame so the
-      // reaction's own pose change lands cleanly instead of flinging jiggle bones out to the
-      // side (the runaway tail/hair seen on video right after tapping an ear).
-      c.__justReacted = true;
+      // layoutStudioSlots / c.__slotDragActive in renderLoop), just triggered a different way, and
+      // spread over longer than one frame: setAnimation() on track 0 crossfades this character's
+      // pose from wherever idle happened to be into reaction.primary over defaultMix (0.25s), not
+      // instantly. Idle keeps swaying the parents of this rig's physics-driven bones (tail root,
+      // hair root, ...) the whole time, so every blended frame of that crossfade nudges them a
+      // little further from where physics last expected them — a spring reads each nudge as a
+      // fresh, large velocity, and the divergence compounds across the whole mix instead of
+      // happening once. pinReactionPhysics() below holds physics rigid for that entire window
+      // (see REACTION_PIN_MS) instead of just the first frame, so the reaction's pose change lands
+      // cleanly instead of flinging jiggle bones out to the side (the runaway tail/hair on video
+      // right after tapping an ear).
+      pinReactionPhysics(c);
       c.animationState.setAnimation(0, reaction.primary, false);
       if (reaction.followUp){
         c.animationState.addAnimation(0, reaction.followUp, false, 0);
@@ -4229,11 +4257,13 @@
         // physics on Physics.reset for the drag's entire duration keeps jiggle bones rigidly
         // pinned to the body (no sway) while it's being manually repositioned; ordinary
         // Physics.update — and therefore natural jiggle — resumes the instant the drag ends.
-        // c.__justReacted covers the *other* kind of teleport: an interaction (tap/pat/pet)
-        // instantly swapping this character's animation on track 0 — see the comment on
-        // c.__justReacted in playReaction/startHoldReaction/stopHoldReaction for why that needs
-        // exactly the same one-frame Physics.reset treatment as a manual body-drag teleport.
-        const isDragPinned = !!(c.__justRepositioned || c.__slotDragActive || c.__justReacted);
+        // c.__reactionPinnedUntil covers the *other* kind of teleport: an interaction
+        // (tap/pat/pet) crossfading this character onto a different track-0 animation — see
+        // pinReactionPhysics()/REACTION_PIN_MS and the comment on animationStateData.defaultMix
+        // for why this needs the same Physics.reset treatment held for the crossfade's whole
+        // duration, not just the first frame of it.
+        const isDragPinned = !!(c.__justRepositioned || c.__slotDragActive ||
+          (c.__reactionPinnedUntil && now < c.__reactionPinnedUntil));
         // Belt-and-suspenders: spine.Physics.reset alone does NOT fully suppress this rig's
         // PhysicsConstraint-driven hair/skirt sway during a fast body-drag on this pinned
         // spine-webgl 4.3.13 build — confirmed via a bone-drift diagnostic that caught the back
@@ -4256,7 +4286,6 @@
           : null;
         c.skeleton.updateWorldTransform(isDragPinned ? spine.Physics.reset : spine.Physics.update);
         c.__justRepositioned = false;
-        c.__justReacted = false;
         if (__pcPoseSnapshot){
           // Force each physics bone's local pose back to the pre-updateWorldTransform snapshot.
           // Confirmed via [debug][mute-verify]: even with mix=0 and update() replaced by a no-op,
