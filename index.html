@@ -3784,6 +3784,9 @@
     // right now — see the comment on restingAnimation for why reading the live track is unsafe.
     const backTo = c.restingAnimation ? c.restingAnimation.name : (c.skeletonData.animations[0] ? c.skeletonData.animations[0].name : null);
     const wasLoop = c.restingAnimation ? c.restingAnimation.loop : true;
+    // Same instant pose-teleport as playReaction's setAnimation call above — see the comment
+    // there for why this needs c.__justReacted too.
+    c.__justReacted = true;
     c.animationState.setAnimation(0, reaction.primary, true); // loop while held, instead of playReaction's one-shot
     c.activeHolds.set(boneName, {backTo, wasLoop, followUp: reaction.followUp});
   }
@@ -3792,6 +3795,9 @@
     const hold = c.activeHolds.get(boneName);
     if (!hold) return;
     c.activeHolds.delete(boneName);
+    // Same instant pose-teleport as playReaction's setAnimation call — see that comment for why
+    // this needs c.__justReacted too, whichever branch below actually runs.
+    c.__justReacted = true;
     if (hold.followUp){
       c.animationState.setAnimation(0, hold.followUp, false);
       if (hold.backTo) c.animationState.addAnimation(0, hold.backTo, hold.wasLoop, 0);
@@ -3870,6 +3876,19 @@
 
     if (reaction && reaction.primary){
       c.reactionBusy = true;
+      // Same "teleport" problem as a manual body-drag (see c.__justRepositioned in
+      // layoutStudioSlots / c.__slotDragActive in renderLoop), just triggered a different way:
+      // setAnimation() on track 0 instantly swaps this character's pose from wherever idle
+      // happened to be to reaction.primary's first frame, with no interpolation. Any bone
+      // upstream of a physics constraint (tail root, hair root, ...) that lands somewhere
+      // meaningfully different between those two poses moves that whole distance in a single
+      // frame, which Spine's physics constraints read as an enormous one-frame velocity — the
+      // exact mechanism that was already fixed for drag teleports, just never wired up for
+      // reaction/animation teleports. c.__justReacted below feeds this character into the same
+      // Physics.reset + setPhysicsConstraintsMuted + rigid-recompute path for one frame so the
+      // reaction's own pose change lands cleanly instead of flinging jiggle bones out to the
+      // side (the runaway tail/hair seen on video right after tapping an ear).
+      c.__justReacted = true;
       c.animationState.setAnimation(0, reaction.primary, false);
       if (reaction.followUp){
         c.animationState.addAnimation(0, reaction.followUp, false, 0);
@@ -4210,7 +4229,11 @@
         // physics on Physics.reset for the drag's entire duration keeps jiggle bones rigidly
         // pinned to the body (no sway) while it's being manually repositioned; ordinary
         // Physics.update — and therefore natural jiggle — resumes the instant the drag ends.
-        const isDragPinned = !!(c.__justRepositioned || c.__slotDragActive);
+        // c.__justReacted covers the *other* kind of teleport: an interaction (tap/pat/pet)
+        // instantly swapping this character's animation on track 0 — see the comment on
+        // c.__justReacted in playReaction/startHoldReaction/stopHoldReaction for why that needs
+        // exactly the same one-frame Physics.reset treatment as a manual body-drag teleport.
+        const isDragPinned = !!(c.__justRepositioned || c.__slotDragActive || c.__justReacted);
         // Belt-and-suspenders: spine.Physics.reset alone does NOT fully suppress this rig's
         // PhysicsConstraint-driven hair/skirt sway during a fast body-drag on this pinned
         // spine-webgl 4.3.13 build — confirmed via a bone-drift diagnostic that caught the back
@@ -4233,6 +4256,7 @@
           : null;
         c.skeleton.updateWorldTransform(isDragPinned ? spine.Physics.reset : spine.Physics.update);
         c.__justRepositioned = false;
+        c.__justReacted = false;
         if (__pcPoseSnapshot){
           // Force each physics bone's local pose back to the pre-updateWorldTransform snapshot.
           // Confirmed via [debug][mute-verify]: even with mix=0 and update() replaced by a no-op,
