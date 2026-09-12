@@ -4139,20 +4139,14 @@
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
     // off.x/off.y are already in the DRAGGED bone's local (parent-relative) frame — see the
-    // pointermove handler that builds `off` via boneWorldMatrix(bone.parent). Follow targets
-    // (face/backhead/hear) share that same parent, so the numbers are valid to reuse directly...
-    // but FOLLOW_MIX_X/FOLLOW_MIX_Y/FOLLOW_MAX_Y are meant to mean "sideways" and "up/down" on
-    // SCREEN, not "this bone's local x/y". On a rig where the head's parent chain carries close
-    // to a 90°/100° cumulative rotation (as on this character), local x ends up pointing almost
-    // straight up/down on screen and local y almost straight sideways — so applying the mixes
-    // straight to local x/y would put sideways strength on the vertical axis and vice versa.
-    // Converting to world space first, splitting sideways/vertical there, then converting back
-    // makes the mix behave the same regardless of a given rig's rotation.
+    // pointermove handler that builds `off` via boneWorldMatrix(bone.parent). FOLLOW_MIX_X/
+    // FOLLOW_MIX_Y/FOLLOW_MAX_Y are meant to mean "sideways" and "up/down" on SCREEN, so this
+    // first converts the offset into world space using the SOURCE bone's own parent matrix.
     const sourceBone = c.skeleton.findBone(sourceName);
-    const parentMatrix = sourceBone && boneWorldMatrix(sourceBone.parent);
+    const sourceParentMatrix = sourceBone && boneWorldMatrix(sourceBone.parent);
     let worldDx = off.x, worldDy = off.y;
-    if (parentMatrix){
-      const {a, b, c: cc, d} = parentMatrix;
+    if (sourceParentMatrix){
+      const {a, b, c: cc, d} = sourceParentMatrix;
       worldDx = a*off.x + b*off.y;
       worldDy = cc*off.x + d*off.y;
     }
@@ -4160,21 +4154,27 @@
     let worldFy = worldDy * FOLLOW_MIX_Y;
     if (worldFy > FOLLOW_MAX_Y) worldFy = FOLLOW_MAX_Y;
     else if (worldFy < -FOLLOW_MAX_Y) worldFy = -FOLLOW_MAX_Y;
-    // Convert the now screen-correct sideways/vertical amounts back into the shared local frame
-    // (same parent as sourceBone, same matrix) before writing them onto each follow target's pose.
-    let localFx = worldFx, localFy = worldFy;
-    if (parentMatrix){
-      const {a, b, c: cc, d} = parentMatrix;
-      const det = a*d - b*cc;
-      if (Math.abs(det) > 1e-9){
-        const invDet = 1/det;
-        localFx = (worldFx*d - worldFy*b) * invDet;
-        localFy = (worldFy*a - worldFx*cc) * invDet;
-      }
-    }
     targets.forEach(targetName=>{
       const bone = c.skeleton.findBone(targetName);
       if (!bone) return;
+      // Convert the screen-correct sideways/vertical amounts back into THIS TARGET's own local
+      // frame, using ITS OWN parent's matrix — not the source bone's. head/face/backhead/hear
+      // don't all share one common parent (only backhead happens to share atama/cheek's parent),
+      // so reusing the source's parent matrix for every target silently mangled the vertical
+      // component for whichever targets have a differently-rotated parent: it looked like only
+      // backhead was "following" vertically while head/face/hear stayed put, even though the
+      // world-space offset being fed in was identical for all four.
+      const targetParentMatrix = boneWorldMatrix(bone.parent);
+      let localFx = worldFx, localFy = worldFy;
+      if (targetParentMatrix){
+        const {a, b, c: cc, d} = targetParentMatrix;
+        const det = a*d - b*cc;
+        if (Math.abs(det) > 1e-9){
+          const invDet = 1/det;
+          localFx = (worldFx*d - worldFy*b) * invDet;
+          localFy = (worldFy*a - worldFx*cc) * invDet;
+        }
+      }
       let base = c.followBases.get(targetName);
       if (!base){
         const p = bonePose(bone);
