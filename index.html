@@ -2451,11 +2451,18 @@
 
   // Finds which studio character (if any) owns an interactive bone under this pointer, checking
   // each placed character in turn since they sit side by side rather than overlapping.
+  // Tap-only in the studio: testing confirmed a plain short tap on a 'pat' bone (releases before
+  // DRAG_THRESHOLD_PX -> playReaction('hit')) is fine on its own, but the physics runaway
+  // (tail/hair flinging out) that kept reproducing came from the *held/dragged* interactions —
+  // cheek "pull" (a 'pull'-type bone, always a drag) and the pet hold-drag that a 'pat' bone
+  // escalates into once the pointer moves past that threshold (see the studio-only guard on that
+  // escalation in pointermove). So only 'pat' bones are hit-testable here at all, and the escalation
+  // itself is blocked, leaving nothing but the tap path reachable in the studio.
   function findStudioHit(clientX, clientY){
     const chars = studioSlots.map(s=>s.char).filter(Boolean);
     for (const c of chars){
       const hit = findHitBone(c, clientX, clientY);
-      if (hit) return {c, hit};
+      if (hit && hit.type === 'pat') return {c, hit};
     }
     return null;
   }
@@ -3719,7 +3726,9 @@
     }
     if (gesture && gesture.pointerId === e.pointerId && !gesture.resolved){
       const dist = Math.hypot(e.clientX - gesture.startX, e.clientY - gesture.startY);
-      if (dist > DRAG_THRESHOLD_PX){
+      // Studio: never escalate into the pet hold-drag below — only the tap resolved on release
+      // (in endDrag) is enabled there. See the comment on findStudioHit for why.
+      if (dist > DRAG_THRESHOLD_PX && mode !== 'studio'){
         // Moved past the tap threshold before release — this is a pet/stroke drag rather than a
         // tap, so it no longer falls through to the tap ("hit") reaction on release. Start the
         // dedicated pet hold (loops pet_idle for as long as the pointer stays down); marking
