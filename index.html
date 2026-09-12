@@ -4133,8 +4133,8 @@
   // (head's art doesn't stretch to cover it), so vertical stays tiny and capped while sideways
   // can be a bit more generous.
   const FOLLOW_MIX_X = 0.035;
-  const FOLLOW_MIX_Y = 0.001;
-  const FOLLOW_MAX_Y = 0.001;
+  const FOLLOW_MIX_Y = 0.02;
+  const FOLLOW_MAX_Y = 0.02;
   function applyManualFollow(c, sourceName, off){
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
