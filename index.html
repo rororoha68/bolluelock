@@ -175,6 +175,16 @@
   }
   .studio-nav-btn:hover{ border-color:var(--accent-2); }
   .studio-nav-btn.active{ border-color:var(--accent); color:var(--accent); }
+  /* Small "beta" tag used both on the studio nav button and the studio panel heading, so the
+     experimental status is visible whether the user is browsing the top nav or already inside
+     the studio panel. */
+  .beta-badge{
+    display:inline-block; vertical-align:middle; margin-left:6px;
+    font-family:'Inter', sans-serif; font-size:10px; font-weight:600; letter-spacing:0.3px;
+    color:var(--bg); background:var(--danger);
+    padding:2px 7px; border-radius:999px; line-height:1.4;
+  }
+  .studio-panel-head .beta-badge{ font-size:11px; }
   .char-select{
     flex:0 0 auto;
     background:var(--panel);
@@ -506,9 +516,29 @@
     </div>
   </div>
 
+  <!-- One-time notice shown the first time the studio is opened, warning that it's a beta
+       feature and may still have bugs. Dismissible via the close button, backdrop click, or
+       Escape (unlike welcomeOverlay above) since this is just a heads-up, not a required
+       content disclosure — and remembered in localStorage so it doesn't reappear on later
+       visits once acknowledged. -->
+  <div class="modal-overlay" id="studioBetaOverlay">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 data-i18n="studioBetaTitle"></h2>
+        <button class="modal-close" id="studioBetaClose" type="button" data-i18n-attr-aria-label="closeLabel">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="dock-desc" style="margin:0 0 18px; font-size:13.5px; line-height:1.7; color:var(--text);" data-i18n="studioBetaBody"></p>
+        <button type="button" class="update-banner-btn" id="studioBetaConfirmBtn" style="width:100%; padding:10px 16px;" data-i18n="studioBetaConfirm"></button>
+      </div>
+    </div>
+  </div>
+
   <div class="char-tabs" id="charTabs">
     <select class="char-select" id="charSelect" aria-label="Character"></select>
-    <button class="studio-nav-btn" id="studioNavBtn" type="button" data-i18n="studioNav"></button>
+    <button class="studio-nav-btn" id="studioNavBtn" type="button">
+      <span data-i18n="studioNav"></span><span class="beta-badge" data-i18n="betaBadge"></span>
+    </button>
   </div>
 
   <section class="gallery" id="galleryView">
@@ -557,7 +587,8 @@
       </section>
       <section class="dock-panel" id="studioPanel" style="display:none;">
         <div class="studio-panel-head">
-          <h2 data-i18n="studioTitle"></h2>
+          <h2><span data-i18n="studioTitle"></span><span class="beta-badge" data-i18n="betaBadge"></span></h2>
+          <p class="dock-desc" style="margin:0; color:var(--danger);" data-i18n="studioBetaWarning"></p>
           <div class="studio-panel-actions">
             <button type="button" class="anim-btn" id="studioExportBtn" data-i18n="studioExportBtn"></button>
             <button type="button" class="anim-btn" id="studioResetBgPositionBtn" data-i18n="studioResetBgPositionBtn"></button>
@@ -658,6 +689,9 @@
   const updateBannerDismissBtn = document.getElementById('updateBannerDismissBtn');
   const welcomeOverlay = document.getElementById('welcomeOverlay');
   const welcomeConfirmBtn = document.getElementById('welcomeConfirmBtn');
+  const studioBetaOverlay = document.getElementById('studioBetaOverlay');
+  const studioBetaClose = document.getElementById('studioBetaClose');
+  const studioBetaConfirmBtn = document.getElementById('studioBetaConfirmBtn');
   const studioNavBtn = document.getElementById('studioNavBtn');
   const studioPanel = document.getElementById('studioPanel');
   const studioSlotList = document.getElementById('studioSlotList');
@@ -677,6 +711,7 @@
   const studioPickSkinSelect = document.getElementById('studioPickSkinSelect');
   const studioPickConfirmBtn = document.getElementById('studioPickConfirmBtn');
   const WELCOME_SEEN_KEY = 'chr-playroom-welcome-seen';
+  const STUDIO_BETA_SEEN_KEY = 'chr-playroom-studio-beta-seen';
   const PATCH_NOTES_SEEN_KEY = 'chr-playroom-last-seen-patch';
   // When a newer patch version is spotted while the page is already open, its version string is
   // stashed here so that the *next* full page load (i.e. the refresh the banner is asking for)
@@ -842,7 +877,12 @@
       studioExportEmptyToast: '무대에 캐릭터를 먼저 배치해주세요.',
       studioExportFailToast: 'PNG 내보내기에 실패했어요.',
       studioLayerForward: '앞으로',
-      studioLayerBackward: '뒤로'
+      studioLayerBackward: '뒤로',
+      betaBadge: '베타',
+      studioBetaWarning: '⚠ 스튜디오는 베타 기능이에요. 아직 다듬는 중이라 버그가 있을 수 있어요.',
+      studioBetaTitle: '스튜디오는 베타 기능이에요',
+      studioBetaBody: '스튜디오는 아직 개발 중인 베타 기능입니다. 배경/캐릭터 위치가 어긋나거나 내보내기가 실패하는 등 예상치 못한 버그가 있을 수 있어요. 발견하신 문제는 알려주시면 감사하겠습니다!',
+      studioBetaConfirm: '알겠어요'
     },
     en: {
       patchNotes: 'Patch Notes',
@@ -911,7 +951,12 @@
       studioExportEmptyToast: 'Place a character on stage first.',
       studioExportFailToast: 'Failed to export PNG.',
       studioLayerForward: 'Forward',
-      studioLayerBackward: 'Backward'
+      studioLayerBackward: 'Backward',
+      betaBadge: 'Beta',
+      studioBetaWarning: '⚠ The studio is a beta feature. It\u2019s still being polished, so bugs may show up.',
+      studioBetaTitle: 'The studio is a beta feature',
+      studioBetaBody: 'The studio is still under development. You may run into unexpected bugs, like backgrounds or characters shifting out of place or exports failing. Thanks in advance for reporting anything you run into!',
+      studioBetaConfirm: 'Got it'
     },
     ja: {
       patchNotes: 'パッチノート',
@@ -980,7 +1025,12 @@
       studioExportEmptyToast: '先にステージにキャラクターを配置してください。',
       studioExportFailToast: 'PNGの書き出しに失敗しました。',
       studioLayerForward: '前へ',
-      studioLayerBackward: '後ろへ'
+      studioLayerBackward: '後ろへ',
+      betaBadge: 'ベータ',
+      studioBetaWarning: '⚠ スタジオはベータ機能です。まだ調整中のため不具合が発生する場合があります。',
+      studioBetaTitle: 'スタジオはベータ機能です',
+      studioBetaBody: 'スタジオはまだ開発中のベータ機能です。背景やキャラクターの位置がずれたり、書き出しに失敗するなど、予期しない不具合が発生することがあります。何か問題を見つけたら教えていただけると助かります！',
+      studioBetaConfirm: '了解しました'
     },
     zh: {
       patchNotes: '更新日志',
@@ -1049,7 +1099,12 @@
       studioExportEmptyToast: '请先在舞台上放置角色。',
       studioExportFailToast: 'PNG导出失败。',
       studioLayerForward: '上移一层',
-      studioLayerBackward: '下移一层'
+      studioLayerBackward: '下移一层',
+      betaBadge: '测试版',
+      studioBetaWarning: '⚠ 工作室是测试版功能，目前仍在完善中，可能存在漏洞。',
+      studioBetaTitle: '工作室是测试版功能',
+      studioBetaBody: '工作室目前仍在开发中，可能会遇到意料之外的问题，例如背景或角色位置错位、导出失败等。如果发现任何问题，欢迎告诉我们！',
+      studioBetaConfirm: '知道了'
     }
   };
 
@@ -1397,6 +1452,25 @@
   }
   welcomeConfirmBtn.addEventListener('click', closeWelcomeModal);
 
+  // One-time notice (per browser) that the studio is a beta feature and may still have bugs.
+  // Shown the first time showStudio() runs; unlike showWelcomeModalIfNeeded, this one can be
+  // dismissed via the X button, backdrop click, or Escape, since it's a heads-up rather than a
+  // mandatory disclosure.
+  function showStudioBetaNoticeIfNeeded(){
+    let seen = null;
+    try{ seen = localStorage.getItem(STUDIO_BETA_SEEN_KEY); } catch(e){}
+    if (seen) return;
+    studioBetaOverlay.classList.add('show');
+  }
+  function closeStudioBetaNotice(){
+    studioBetaOverlay.classList.remove('show');
+    try{ localStorage.setItem(STUDIO_BETA_SEEN_KEY, '1'); } catch(e){}
+  }
+  studioBetaConfirmBtn.addEventListener('click', closeStudioBetaNotice);
+  studioBetaClose.addEventListener('click', closeStudioBetaNotice);
+  studioBetaOverlay.addEventListener('click', (e)=>{ if (e.target === studioBetaOverlay) closeStudioBetaNotice(); });
+  document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape' && studioBetaOverlay.classList.contains('show')) closeStudioBetaNotice(); });
+
   // A manifest entry with no skeleton/atlas file (or an explicit "comingSoon": true flag) is
   // treated as a placeholder: it still shows up in the gallery/tabs so 로하 can announce it
   // ahead of time, but clicking it pops up a notice instead of trying (and failing) to load it.
@@ -1573,6 +1647,7 @@
     initGL();
     resizeCanvas();
     renderStudioSlots();
+    showStudioBetaNoticeIfNeeded();
   }
 
   // Applies (or clears) the user-picked background image on the dedicated studioBgLayer div, and
