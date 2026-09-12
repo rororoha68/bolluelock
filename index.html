@@ -4109,12 +4109,19 @@
   // this instead reproduces just the intended visual — head/face/backhead/hear drifting a little
   // in the same direction as whichever bone (atama or cheek) is being dragged — entirely in local
   // bone-space offsets we control, with a fixed, safe strength.
-  // atama (head pet) intentionally has no entry here anymore: pet has its own dedicated Spine
-  // animation clip, so this manual follow was purely an extra on-screen nudge layered on top of
-  // it — not something that exists in the editor. Removed so the pet reaction now matches the
-  // editor's animation exactly. cheek keeps it: cheek "pull" has no dedicated clip, just the
-  // spring offset, so face/backhead/hear following it is the only visual feedback it has.
-  const FOLLOW_MAP = { cheek: ['head','face','backhead','hear'] };
+  // atama (head pet) needs the same manual follow as cheek: the pointermove handler for the pet
+  // hold-drag (see the "Also start tracking a real positional drag offset for the petted bone"
+  // comment above, around c.offsets.set(gesture.boneName, off)) explicitly builds this bone's
+  // offset "purely so head/face/backhead/hear have something to follow" — but FOLLOW_MAP used to
+  // have no 'atama' entry, so applyManualFollow() below returned immediately (targets undefined)
+  // for every pet drag and silently did nothing. That's why only backhead ever appeared to
+  // follow (it happens to be keyframed directly inside the pet_idle clip itself, independent of
+  // this follow logic) while head/face/hear — which rely entirely on this manual follow, since
+  // the native transform constraint driving them is permanently muted (see
+  // muteHeadFollowConstraints) — never moved at all. Restoring the 'atama' entry here (same
+  // targets as cheek) makes petting actually nudge them the way the editor's own (broken, muted)
+  // constraint was meant to.
+  const FOLLOW_MAP = { atama: ['head','face','backhead','hear'], cheek: ['head','face','backhead','hear'] };
   const FOLLOW_MIX_X = 0.035;
   // Vertical follow kept separate and clamped: dragging atama upward was lifting 'head' enough
   // to visibly expose a gap at the neck, since head's own art doesn't stretch to cover it. A
