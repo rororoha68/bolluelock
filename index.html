@@ -1842,6 +1842,15 @@
           skeleton.updateWorldTransform(spine.Physics.update);
           const moved = before.head && after.head && (Math.abs(after.head.x - before.head.x) > 0.01 || Math.abs(after.head.y - before.head.y) > 0.01);
           console.log('[debug][transform-constraint] TEST: moved atama by (200,200) ->', moved ? '✅ head/face MOVED (constraint is working)' : '❌ head/face DID NOT MOVE (constraint is NOT being applied by this runtime)', {before, after});
+          // Diagnostic test above deliberately turned the native mix ON (via
+          // fixTransformConstraintMixes) to prove the constraint is capable of moving bones at
+          // all. That was previously left ON for the rest of the session — the actual root cause
+          // of parts tearing apart whenever an animation (pet_idle/pull_idle) later drove atama/
+          // cheek hard, since this constraint's math blows up at nonzero mix. Explicitly re-mute
+          // it now that the test is done; muteHeadFollowConstraints() also runs every frame in
+          // both render loops as the real, ongoing safeguard.
+          muteHeadFollowConstraints(skeleton);
+          skeleton.updateWorldTransform(spine.Physics.update);
         } else {
           console.warn('[debug][transform-constraint] could not run live test — missing bone(s)', {atama:!!atama, cheek:!!cheek, head:!!head, face:!!face});
         }
@@ -3042,12 +3051,31 @@
 
   // Runtime bug workaround (spine-webgl 4.3.13 vs. editor-exported 4.3.26 data): the new
   // "property-mapped" transform constraints (atama/cheek -> head/face/backhead/hear) parse their
-  // structure (source/bones/properties) correctly, but this runtime build resets each
-  // constraint's live mix to 0 instead of the exported value (data.mixX, e.g. 0.1) — so the
-  // constraint exists but has zero effect. Confirmed via a live before/after bone-nudge test in
-  // the browser console. Re-synced every frame (not just once at load) in case AnimationState.apply()
-  // or updateWorldTransform() resets it back to the buggy 0 on later frames too.
+  // structure (source/bones/properties) correctly, but this runtime build's math for this
+  // constraint type is unstable once its mix is above 0 — confirmed on video to blow the target
+  // bone up to several times its normal size instead of a subtle nudge. Because of that, the
+  // design decision (see applyManualFollow/FOLLOW_MAP below) is to leave these specific
+  // constraints permanently muted (mix forced to 0, a harmless no-op) and reproduce the intended
+  // "head/cheek following" visual entirely in our own manual JS code instead, where it's safe.
+  //
+  // 파츠 뜯어짐(스튜디오에서 캐릭터를 옮긴 뒤 pet_idle/pull_idle 재생 시 중심에서 먼 파츠일수록 심해지는 증상)의
+  // 실제 원인: 이 뮤트가 로드 시 self-test 블록 안에서 "fixTransformConstraintMixes()"라는, 이름과 반대로
+  // mix를 원래 데이터 값(0이 아닌 값, 예: 0.1)으로 "복구"하는 함수를 통해 딱 한 번만 걸렸었고, 그 뒤로는
+  // 다시 0으로 되돌리는 코드가 전혀 없었음. 즉 로드 이후 세션 내내 이 망가진 4.3 제약 계산이 켜진 채로
+  // 돌아가고 있었던 것 — 대부분의 애니메이션에서는 atama/cheek가 거의 안 움직여서 티가 안 났지만,
+  // atama/cheek를 크게 움직이는 pet_idle/pull_idle 같은 모션이 재생되면 그 큰 소스 이동량이 불안정한
+  // 제약 계산에 그대로 들어가 스케일/회전이 폭주했고, 그 결과가 제약 대상 본(head/face/backhead/hear)의
+  // 로컬 원점에서 먼 정점일수록(그리고 스튜디오의 후처리 회전 슬라이더가 그 폭주한 월드 좌표를 다시 한 번
+  // 중심점 기준으로 회전시키면서) 더 크게 벌어져 보였던 것.
+  //
+  // 고침: 아래 muteHeadFollowConstraints()를 매 프레임(renderLoop, 스튜디오/단일 뷰어 모두) 애니메이션
+  // 적용 직후·updateWorldTransform() 직전에 호출해, 어떤 애니메이션 클립이 이 제약들의 mix를 얼마로
+  // 키프레임하든 상관없이 매 프레임 강제로 0(뮤트)으로 되돌린다. 로드 시점 self-test도 이제 이 함수를
+  // 통해 뮤트 상태를 명시적으로 복구하도록 정리함 — 더 이상 "복구 후 방치"로 몰래 켜진 채 남지 않는다.
   const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','atama-to-face','atama-to-backhead','atama-to-hear','cheek-to-head','cheek-to-face','cheek-to-backhead','cheek-to-hear'];
+  // Kept only for the load-time self-test's own before/after diagnostic (it needs to briefly turn
+  // the native mix ON to prove the constraint *can* move bones at all) — never call this anywhere
+  // else. Every real render path uses muteHeadFollowConstraints() below instead.
   function fixTransformConstraintMixes(skeleton){
     const all = [].concat(
       Array.isArray(skeleton.constraints) ? skeleton.constraints : [],
@@ -3061,6 +3089,28 @@
       c.mixX = correctMixX;
       c.mixY = correctMixY;
       if (c.appliedPose){ c.appliedPose.mixX = correctMixX; c.appliedPose.mixY = correctMixY; }
+    });
+  }
+  // THE ACTUAL FIX: forces every head/cheek-follow transform constraint's mix (every mix* field
+  // this runtime build might expose — mixX/mixY plus the spec's mixRotate/mixScaleX/mixScaleY/
+  // mixShearY, zeroed defensively in case any of those are also live on this build) down to 0,
+  // on whichever of pose/live/appliedPose fields exist. Call this every frame, right after
+  // animationState.apply() and before updateWorldTransform(), so a clip that keyframes these
+  // constraints' mix (pet_idle/pull_idle keyframe atama/cheek heavily, which is exactly the input
+  // that fed the blow-up) never gets a chance to leave a non-zero mix in place for even one frame.
+  const HEAD_FOLLOW_MIX_FIELDS = ['mixX','mixY','mixRotate','mixScaleX','mixScaleY','mixShearY'];
+  function muteHeadFollowConstraints(skeleton){
+    const all = [].concat(
+      Array.isArray(skeleton.constraints) ? skeleton.constraints : [],
+      Array.isArray(skeleton.transformConstraints) ? skeleton.transformConstraints : []
+    );
+    all.forEach(c => {
+      if (!c || !c.data || !HEAD_FOLLOW_CONSTRAINT_NAMES.includes(c.data.name)) return;
+      HEAD_FOLLOW_MIX_FIELDS.forEach(field => {
+        if (c.pose && field in c.pose) c.pose[field] = 0;
+        if (field in c) c[field] = 0;
+        if (c.appliedPose && field in c.appliedPose) c.appliedPose[field] = 0;
+      });
     });
   }
 
@@ -4326,6 +4376,11 @@
       chars.forEach(c=>{
         c.animationState.update(dt);
         c.animationState.apply(c.skeleton);
+        // Re-mute the moment any clip's keyframes may have set it non-zero (see
+        // muteHeadFollowConstraints for the full "파츠 뜯어짐" root-cause writeup) — must run
+        // after apply() (which is what would have re-enabled it) and before
+        // updateWorldTransform() below (which is what actually runs the buggy constraint math).
+        muteHeadFollowConstraints(c.skeleton);
         applyProceduralEffects(c, dt);
         // Physics.reset (instead of the usual Physics.update) on the exact frame a body-drag just
         // teleported this character — see the c.__justRepositioned comment in the slotDrag
@@ -4566,6 +4621,9 @@
     if (!c){ updateHints(null); return; }
     c.animationState.update(dt);
     c.animationState.apply(c.skeleton);
+    // Same re-mute as the studio render loop — see muteHeadFollowConstraints for why this has to
+    // run every frame, after apply() and before updateWorldTransform().
+    muteHeadFollowConstraints(c.skeleton);
     applyProceduralEffects(c, dt);
     c.skeleton.updateWorldTransform(spine.Physics.update);
     updateHitAnchors(c);
