@@ -4128,8 +4128,8 @@
   // of the character's own bounding height (c.bounds.h, read inside applyManualFollow) instead of
   // a fixed absolute number, so "how far is too far before it looks disconnected" scales with the
   // character's size instead of being hand-tuned for one specific rig's pixel scale.
-  const FOLLOW_MIX_Y = 0.02;
-  const FOLLOW_MAX_Y_RATIO = 0.02; // vertical drift capped to ~2% of the character's bounding height
+  const FOLLOW_MIX_Y = 0.028;
+  const FOLLOW_MAX_Y_RATIO = 0.028; // vertical drift capped to ~2.8% of the character's bounding height
   function applyManualFollow(c, sourceName, off){
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
