@@ -2045,11 +2045,6 @@
         // spine-webgl 4.3.13 transform-constraint implementation for the "atama/cheek drag also
         // nudges head/face/backhead/hear a little" effect.
         followBases: new Map(),
-        // Editor-authored mixX/mixY per head/cheek-follow constraint (atama-to-head,
-        // cheek-to-face, ...) — see getHeadFollowMixTable(). applyManualFollow uses these exact
-        // values instead of a single guessed constant, so the manual reimplementation matches
-        // what the animator actually set up in Spine, not an approximation.
-        followMixTable: getHeadFollowMixTable(skeleton),
         // Stable, "settled" world position per interactive bone, used for hit-testing and hint
         // dots instead of the bone's live (possibly mid-animation) position. Without this, tapping
         // the head to trigger the hit reaction — whether the dedicated Spine clip or the procedural
@@ -3134,30 +3129,6 @@
     });
   }
 
-  // Reads the ACTUAL editor-authored mixX/mixY for each of the 8 head/cheek-follow constraints
-  // straight off c.data (the constraint's static design-time data, never touched by
-  // muteHeadFollowConstraints — that only zeroes the *live* pose/appliedPose fields, so .data is
-  // always the untouched original value from the .json/.skel export). Used so the manual JS
-  // follow below reproduces the editor's own per-target strength (e.g. atama-to-head might be
-  // authored stronger than atama-to-hear) instead of one guessed constant applied to every
-  // target equally. Keyed by the constraint's own name ("atama-to-head", "cheek-to-face", ...)
-  // so applyManualFollow can look up sourceName+'-to-'+targetName directly.
-  function getHeadFollowMixTable(skeleton){
-    const all = [].concat(
-      Array.isArray(skeleton.constraints) ? skeleton.constraints : [],
-      Array.isArray(skeleton.transformConstraints) ? skeleton.transformConstraints : []
-    );
-    const table = new Map();
-    all.forEach(c => {
-      if (!c || !c.data || !HEAD_FOLLOW_CONSTRAINT_NAMES.includes(c.data.name)) return;
-      table.set(c.data.name, {
-        mixX: Number.isFinite(c.data.mixX) ? c.data.mixX : 1,
-        mixY: Number.isFinite(c.data.mixY) ? c.data.mixY : 1
-      });
-    });
-    return table;
-  }
-
   // Finds every PhysicsConstraint (jiggle-bone spring) on a skeleton, regardless of which array
   // shape this runtime build exposes them under (some builds group constraints by type under
   // skeleton.physicsConstraints, others only expose a single mixed skeleton.constraints list —
@@ -4156,11 +4127,12 @@
   // targets as cheek) makes petting actually nudge them the way the editor's own (broken, muted)
   // constraint was meant to.
   const FOLLOW_MAP = { atama: ['head','face','backhead','hear'], cheek: ['head','face','backhead','hear'] };
-  // Fallback only, used if a particular sourceName-to-targetName constraint isn't found in
-  // c.followMixTable (e.g. a character export that's missing one of the 8 named constraints).
-  // Real strength for every normal case comes from getHeadFollowMixTable()/c.followMixTable —
-  // the exact mixX/mixY the animator authored in Spine for each constraint — not a guess.
-  const FOLLOW_MIX_FALLBACK = 1;
+  // Single, fixed follow strength applied uniformly to every target — a subtle nudge (roughly
+  // what the native, permanently-muted transform constraint was meant to produce; see
+  // fixTransformConstraintMixes's "example 0.1" note above), not each constraint's exact
+  // editor-authored mixX/mixY. Using the real per-target editor values here made head/face/
+  // backhead/hear drift far more than intended, so this stays a single guessed constant instead.
+  const FOLLOW_STRENGTH = 0.1;
   function applyManualFollow(c, sourceName, off){
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
@@ -4187,14 +4159,10 @@
     targets.forEach(targetName=>{
       const bone = c.skeleton.findBone(targetName);
       if (!bone) return;
-      // Each target gets ITS OWN mixX/mixY — exactly what the animator set for e.g.
-      // "atama-to-head" vs. "atama-to-hear" in the editor, rather than one shared strength
-      // applied uniformly to every target.
-      const mixEntry = c.followMixTable && c.followMixTable.get(sourceName + '-to-' + targetName);
-      const mixX = mixEntry ? mixEntry.mixX : FOLLOW_MIX_FALLBACK;
-      const mixY = mixEntry ? mixEntry.mixY : FOLLOW_MIX_FALLBACK;
-      const worldFx = worldDx * mixX;
-      const worldFy = worldDy * mixY;
+      // Same fixed strength for every target (not each constraint's own editor mixX/mixY —
+      // see FOLLOW_STRENGTH above for why).
+      const worldFx = worldDx * FOLLOW_STRENGTH;
+      const worldFy = worldDy * FOLLOW_STRENGTH;
       // Convert this target's screen-correct sideways/vertical amount back into the shared
       // local frame (same parent as sourceBone, same matrix) before writing it onto its pose.
       let localFx = worldFx, localFy = worldFy;
