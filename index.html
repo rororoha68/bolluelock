@@ -4127,26 +4127,27 @@
   // targets as cheek) makes petting actually nudge them the way the editor's own (broken, muted)
   // constraint was meant to.
   const FOLLOW_MAP = { atama: ['head','face','backhead','hear'], cheek: ['head','face','backhead','hear'] };
-  // Single, fixed follow strength applied uniformly to every target — a subtle nudge (roughly
-  // what the native, permanently-muted transform constraint was meant to produce; see
-  // fixTransformConstraintMixes's "example 0.1" note above), not each constraint's exact
-  // editor-authored mixX/mixY. Using the real per-target editor values here made head/face/
-  // backhead/hear drift far more than intended, so this stays a single guessed constant instead.
-  const FOLLOW_STRENGTH = 0.1;
+  // Restored from the pre-"editor mixX/mixY" version of this file: separate, much weaker
+  // sideways (X) vs. vertical (Y) strength, plus a hard vertical clamp — not a single shared
+  // constant. Dragging atama upward with too generous a vertical mix visibly exposed a neck gap
+  // (head's art doesn't stretch to cover it), so vertical stays tiny and capped while sideways
+  // can be a bit more generous.
+  const FOLLOW_MIX_X = 0.035;
+  const FOLLOW_MIX_Y = 0.001;
+  const FOLLOW_MAX_Y = 0.001;
   function applyManualFollow(c, sourceName, off){
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
     // off.x/off.y are already in the DRAGGED bone's local (parent-relative) frame — see the
     // pointermove handler that builds `off` via boneWorldMatrix(bone.parent). Follow targets
     // (face/backhead/hear) share that same parent, so the numbers are valid to reuse directly...
-    // but a Spine TransformConstraint's mixX/mixY are defined in WORLD space, not "this bone's
-    // local x/y". On a rig where the head's parent chain carries close to a 90°/100° cumulative
-    // rotation (as on this character), local x ends up pointing almost straight up/down on
-    // screen and local y almost straight sideways — applying mixX/mixY straight to local x/y
-    // would put the editor's "sideways" strength on the vertical axis and vice versa. Converting
-    // to world space first, applying each target's own mixX/mixY there, then converting back
-    // makes the constraint behave the same as it would in the editor regardless of the rig's
-    // rotation.
+    // but FOLLOW_MIX_X/FOLLOW_MIX_Y/FOLLOW_MAX_Y are meant to mean "sideways" and "up/down" on
+    // SCREEN, not "this bone's local x/y". On a rig where the head's parent chain carries close
+    // to a 90°/100° cumulative rotation (as on this character), local x ends up pointing almost
+    // straight up/down on screen and local y almost straight sideways — so applying the mixes
+    // straight to local x/y would put sideways strength on the vertical axis and vice versa.
+    // Converting to world space first, splitting sideways/vertical there, then converting back
+    // makes the mix behave the same regardless of a given rig's rotation.
     const sourceBone = c.skeleton.findBone(sourceName);
     const parentMatrix = sourceBone && boneWorldMatrix(sourceBone.parent);
     let worldDx = off.x, worldDy = off.y;
@@ -4155,23 +4156,25 @@
       worldDx = a*off.x + b*off.y;
       worldDy = cc*off.x + d*off.y;
     }
-    const det = parentMatrix ? (parentMatrix.a*parentMatrix.d - parentMatrix.b*parentMatrix.c) : 1;
-    targets.forEach(targetName=>{
-      const bone = c.skeleton.findBone(targetName);
-      if (!bone) return;
-      // Same fixed strength for every target (not each constraint's own editor mixX/mixY —
-      // see FOLLOW_STRENGTH above for why).
-      const worldFx = worldDx * FOLLOW_STRENGTH;
-      const worldFy = worldDy * FOLLOW_STRENGTH;
-      // Convert this target's screen-correct sideways/vertical amount back into the shared
-      // local frame (same parent as sourceBone, same matrix) before writing it onto its pose.
-      let localFx = worldFx, localFy = worldFy;
-      if (parentMatrix && Math.abs(det) > 1e-9){
-        const {a, b, c: cc, d} = parentMatrix;
+    let worldFx = worldDx * FOLLOW_MIX_X;
+    let worldFy = worldDy * FOLLOW_MIX_Y;
+    if (worldFy > FOLLOW_MAX_Y) worldFy = FOLLOW_MAX_Y;
+    else if (worldFy < -FOLLOW_MAX_Y) worldFy = -FOLLOW_MAX_Y;
+    // Convert the now screen-correct sideways/vertical amounts back into the shared local frame
+    // (same parent as sourceBone, same matrix) before writing them onto each follow target's pose.
+    let localFx = worldFx, localFy = worldFy;
+    if (parentMatrix){
+      const {a, b, c: cc, d} = parentMatrix;
+      const det = a*d - b*cc;
+      if (Math.abs(det) > 1e-9){
         const invDet = 1/det;
         localFx = (worldFx*d - worldFy*b) * invDet;
         localFy = (worldFy*a - worldFx*cc) * invDet;
       }
+    }
+    targets.forEach(targetName=>{
+      const bone = c.skeleton.findBone(targetName);
+      if (!bone) return;
       let base = c.followBases.get(targetName);
       if (!base){
         const p = bonePose(bone);
