@@ -4411,6 +4411,25 @@
         // duration, not just the first frame of it.
         const isDragPinned = !!(c.__justRepositioned || c.__slotDragActive ||
           (c.__reactionPinnedUntil && now < c.__reactionPinnedUntil));
+        // THE FIX for "드래그 직후에만 뒷머리가 찢어짐" (tears specifically the instant a body-drag
+        // ends, only on physics-constraint bones): while isDragPinned is true, setPhysicsConstraintsMuted
+        // below swaps each PhysicsConstraint's own update() method for a complete no-op (see that
+        // function's comment) — meaning the spring's OWN internal "last known position/velocity"
+        // bookkeeping is 100% frozen for the entire drag, no matter how far the character actually
+        // moved, since our separate recomputeBoneWorldRigid() pass only fixes what's drawn on
+        // screen, never touches the constraint's internal state. The instant the drag ends and the
+        // real update() is restored, THAT frame's first real physics update compares its stale,
+        // frozen pre-drag position against the bone's true (now far away) current position and
+        // reads the whole drag distance as one huge single-frame velocity — exactly the fling/tear
+        // seen right after releasing a drag. Fix: on precisely the one transition frame where
+        // pinning just turned off (wasDragPinned true, isDragPinned now false), run ONE
+        // spine.Physics.reset pass with the constraint UNMUTED (not spine.Physics.update) — this
+        // lets the real, now-active constraint code resync its internal position/velocity to the
+        // character's actual current pose with zero implied velocity, instead of jumping straight
+        // to Physics.update and reading that resync gap as a spring impulse. Every following frame
+        // proceeds through the normal isDragPinned-false / Physics.update path as before.
+        const justUnpinned = !!c.__wasDragPinned && !isDragPinned;
+        c.__wasDragPinned = isDragPinned;
         // Belt-and-suspenders: spine.Physics.reset alone does NOT fully suppress this rig's
         // PhysicsConstraint-driven hair/skirt sway during a fast body-drag on this pinned
         // spine-webgl 4.3.13 build — confirmed via a bone-drift diagnostic that caught the back
@@ -4431,7 +4450,7 @@
         const __pcPoseSnapshot = isDragPinned
           ? getBonesNeedingRigidRecompute(c.skeleton).map(b => ({ bone: b, pose: snapshotBonePose(b) }))
           : null;
-        c.skeleton.updateWorldTransform(isDragPinned ? spine.Physics.reset : spine.Physics.update);
+        c.skeleton.updateWorldTransform((isDragPinned || justUnpinned) ? spine.Physics.reset : spine.Physics.update);
         c.__justRepositioned = false;
         if (__pcPoseSnapshot){
           // Force each physics bone's local pose back to the pre-updateWorldTransform snapshot.
