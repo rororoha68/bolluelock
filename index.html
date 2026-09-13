@@ -3082,7 +3082,7 @@
   // 적용 직후·updateWorldTransform() 직전에 호출해, 어떤 애니메이션 클립이 이 제약들의 mix를 얼마로
   // 키프레임하든 상관없이 매 프레임 강제로 0(뮤트)으로 되돌린다. 로드 시점 self-test도 이제 이 함수를
   // 통해 뮤트 상태를 명시적으로 복구하도록 정리함 — 더 이상 "복구 후 방치"로 몰래 켜진 채 남지 않는다.
-  const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','cheek-to-head'];
+  const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','cheek-to-head','atama-to-hear','cheek-to-hear'];
   // Kept only for the load-time self-test's own before/after diagnostic (it needs to briefly turn
   // the native mix ON to prove the constraint *can* move bones at all) — never call this anywhere
   // else. Every real render path uses muteHeadFollowConstraints() below instead.
@@ -4114,7 +4114,7 @@
   // it — not something that exists in the editor. Removed so the pet reaction now matches the
   // editor's animation exactly. cheek keeps it: cheek "pull" has no dedicated clip, just the
   // spring offset, so face/backhead/hear following it is the only visual feedback it has.
-  const FOLLOW_MAP = { cheek: ['head'] };
+  const FOLLOW_MAP = { cheek: ['head','hear'] };
   const FOLLOW_MIX_X = 0.035;
   // Vertical follow kept separate and clamped: dragging atama upward was lifting 'head' enough
   // to visibly expose a gap at the neck, since head's own art doesn't stretch to cover it. A
