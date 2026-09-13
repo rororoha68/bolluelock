@@ -1876,6 +1876,50 @@
       }
       // --- end DEBUG ---------------------------------------------------------------------------
 
+      // --- DEBUG: physics-constraint self-test ------------------------------------------------
+      // Separate from the transform-constraint test above — checks whether this build's
+      // PhysicsConstraint (jiggle-bone spring) objects are actually found and actually move a
+      // bone over a few ticks, independent of anything to do with atama/cheek follow constraints.
+      try {
+        const pcs = getPhysicsConstraints(skeleton);
+        console.log('[debug][physics-constraint] found', pcs.length, 'physics constraints:',
+          pcs.map(pc => ({
+            name: pc.data && pc.data.name,
+            ctor: pc.constructor && pc.constructor.name,
+            mix: pc.mix !== undefined ? pc.mix : (pc.pose ? pc.pose.mix : undefined),
+            dataMix: pc.data && pc.data.mix,
+            hasBone: !!pc.bone, bonesLen: Array.isArray(pc.bones) ? pc.bones.length : 0
+          }))
+        );
+        const testBone = skeleton.findBone('backhairSR2') || skeleton.findBone('mimiR2') || skeleton.findBone('fronthairM2');
+        if (testBone) {
+          const p0 = boneWorldPos(testBone);
+          // Nudge the physics chain's shared ancestor a small, realistic amount (not a fake
+          // 200px teleport) and step physics forward several real frames to see if the spring
+          // actually reacts at all.
+          const anchor = skeleton.findBone('backhead') || skeleton.findBone('head');
+          const anchorPose = anchor && bonePose(anchor);
+          const savedRot = anchorPose ? anchorPose.rotation : null;
+          if (anchorPose) anchorPose.rotation += 15;
+          for (let i=0;i<10;i++){
+            animationState.update(1/30);
+            animationState.apply(skeleton);
+            skeleton.updateWorldTransform(spine.Physics.update);
+          }
+          const p1 = boneWorldPos(testBone);
+          if (anchorPose) anchorPose.rotation = savedRot;
+          skeleton.updateWorldTransform(spine.Physics.reset);
+          const pmoved = p0 && p1 && (Math.abs(p1.x-p0.x) > 0.01 || Math.abs(p1.y-p0.y) > 0.01);
+          console.log('[debug][physics-constraint] TEST: rotated', anchor && anchor.data.name, 'by 15° for 10 frames, watched', testBone.data.name, '->',
+            pmoved ? '✅ physics bone MOVED' : '❌ physics bone DID NOT MOVE', {before: p0, after: p1});
+        } else {
+          console.warn('[debug][physics-constraint] no watch bone found (backhairSR2/mimiR2/fronthairM2 all missing)');
+        }
+      } catch (err) {
+        console.error('[debug][physics-constraint] self-test threw', err);
+      }
+      // --- end DEBUG ---------------------------------------------------------------------------
+
       // Pick a single best bone per interaction type instead of every substring match — Spine rigs
       // often have several bones whose name happens to contain "head" (a hair root like "head6",
       // rig control handles like "headcontrol"/"headcontrol2") that aren't the actual clickable part
