@@ -175,16 +175,6 @@
   }
   .studio-nav-btn:hover{ border-color:var(--accent-2); }
   .studio-nav-btn.active{ border-color:var(--accent); color:var(--accent); }
-  /* Small "beta" tag used both on the studio nav button and the studio panel heading, so the
-     experimental status is visible whether the user is browsing the top nav or already inside
-     the studio panel. */
-  .beta-badge{
-    display:inline-block; vertical-align:middle; margin-left:6px;
-    font-family:'Inter', sans-serif; font-size:10px; font-weight:600; letter-spacing:0.3px;
-    color:var(--bg); background:var(--danger);
-    padding:2px 7px; border-radius:999px; line-height:1.4;
-  }
-  .studio-panel-head .beta-badge{ font-size:11px; }
   .char-select{
     flex:0 0 auto;
     background:var(--panel);
@@ -516,29 +506,9 @@
     </div>
   </div>
 
-  <!-- One-time notice shown the first time the studio is opened, warning that it's a beta
-       feature and may still have bugs. Dismissible via the close button, backdrop click, or
-       Escape (unlike welcomeOverlay above) since this is just a heads-up, not a required
-       content disclosure — and remembered in localStorage so it doesn't reappear on later
-       visits once acknowledged. -->
-  <div class="modal-overlay" id="studioBetaOverlay">
-    <div class="modal-panel">
-      <div class="modal-header">
-        <h2 data-i18n="studioBetaTitle"></h2>
-        <button class="modal-close" id="studioBetaClose" type="button" data-i18n-attr-aria-label="closeLabel">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="dock-desc" style="margin:0 0 18px; font-size:13.5px; line-height:1.7; color:var(--text);" data-i18n="studioBetaBody"></p>
-        <button type="button" class="update-banner-btn" id="studioBetaConfirmBtn" style="width:100%; padding:10px 16px;" data-i18n="studioBetaConfirm"></button>
-      </div>
-    </div>
-  </div>
-
   <div class="char-tabs" id="charTabs">
     <select class="char-select" id="charSelect" aria-label="Character"></select>
-    <button class="studio-nav-btn" id="studioNavBtn" type="button">
-      <span data-i18n="studioNav"></span><span class="beta-badge" data-i18n="betaBadge"></span>
-    </button>
+    <button class="studio-nav-btn" id="studioNavBtn" type="button" data-i18n="studioNav"></button>
   </div>
 
   <section class="gallery" id="galleryView">
@@ -587,8 +557,7 @@
       </section>
       <section class="dock-panel" id="studioPanel" style="display:none;">
         <div class="studio-panel-head">
-          <h2><span data-i18n="studioTitle"></span><span class="beta-badge" data-i18n="betaBadge"></span></h2>
-          <p class="dock-desc" style="margin:0; color:var(--danger);" data-i18n="studioBetaWarning"></p>
+          <h2 data-i18n="studioTitle"></h2>
           <div class="studio-panel-actions">
             <button type="button" class="anim-btn" id="studioExportBtn" data-i18n="studioExportBtn"></button>
             <button type="button" class="anim-btn" id="studioResetBgPositionBtn" data-i18n="studioResetBgPositionBtn"></button>
@@ -689,9 +658,6 @@
   const updateBannerDismissBtn = document.getElementById('updateBannerDismissBtn');
   const welcomeOverlay = document.getElementById('welcomeOverlay');
   const welcomeConfirmBtn = document.getElementById('welcomeConfirmBtn');
-  const studioBetaOverlay = document.getElementById('studioBetaOverlay');
-  const studioBetaClose = document.getElementById('studioBetaClose');
-  const studioBetaConfirmBtn = document.getElementById('studioBetaConfirmBtn');
   const studioNavBtn = document.getElementById('studioNavBtn');
   const studioPanel = document.getElementById('studioPanel');
   const studioSlotList = document.getElementById('studioSlotList');
@@ -711,7 +677,6 @@
   const studioPickSkinSelect = document.getElementById('studioPickSkinSelect');
   const studioPickConfirmBtn = document.getElementById('studioPickConfirmBtn');
   const WELCOME_SEEN_KEY = 'chr-playroom-welcome-seen';
-  const STUDIO_BETA_SEEN_KEY = 'chr-playroom-studio-beta-seen';
   const PATCH_NOTES_SEEN_KEY = 'chr-playroom-last-seen-patch';
   // When a newer patch version is spotted while the page is already open, its version string is
   // stashed here so that the *next* full page load (i.e. the refresh the banner is asking for)
@@ -877,12 +842,7 @@
       studioExportEmptyToast: '무대에 캐릭터를 먼저 배치해주세요.',
       studioExportFailToast: 'PNG 내보내기에 실패했어요.',
       studioLayerForward: '앞으로',
-      studioLayerBackward: '뒤로',
-      betaBadge: '베타',
-      studioBetaWarning: '⚠ 스튜디오는 베타 기능이에요. 아직 다듬는 중이라 버그가 있을 수 있어요.',
-      studioBetaTitle: '스튜디오는 베타 기능이에요',
-      studioBetaBody: '스튜디오는 아직 개발 중인 베타 기능입니다. 배경/캐릭터 위치가 어긋나거나 내보내기가 실패하는 등 예상치 못한 버그가 있을 수 있어요. 발견하신 문제는 알려주시면 감사하겠습니다!',
-      studioBetaConfirm: '알겠어요'
+      studioLayerBackward: '뒤로'
     },
     en: {
       patchNotes: 'Patch Notes',
@@ -951,12 +911,7 @@
       studioExportEmptyToast: 'Place a character on stage first.',
       studioExportFailToast: 'Failed to export PNG.',
       studioLayerForward: 'Forward',
-      studioLayerBackward: 'Backward',
-      betaBadge: 'Beta',
-      studioBetaWarning: '⚠ The studio is a beta feature. It\u2019s still being polished, so bugs may show up.',
-      studioBetaTitle: 'The studio is a beta feature',
-      studioBetaBody: 'The studio is still under development. You may run into unexpected bugs, like backgrounds or characters shifting out of place or exports failing. Thanks in advance for reporting anything you run into!',
-      studioBetaConfirm: 'Got it'
+      studioLayerBackward: 'Backward'
     },
     ja: {
       patchNotes: 'パッチノート',
@@ -1025,12 +980,7 @@
       studioExportEmptyToast: '先にステージにキャラクターを配置してください。',
       studioExportFailToast: 'PNGの書き出しに失敗しました。',
       studioLayerForward: '前へ',
-      studioLayerBackward: '後ろへ',
-      betaBadge: 'ベータ',
-      studioBetaWarning: '⚠ スタジオはベータ機能です。まだ調整中のため不具合が発生する場合があります。',
-      studioBetaTitle: 'スタジオはベータ機能です',
-      studioBetaBody: 'スタジオはまだ開発中のベータ機能です。背景やキャラクターの位置がずれたり、書き出しに失敗するなど、予期しない不具合が発生することがあります。何か問題を見つけたら教えていただけると助かります！',
-      studioBetaConfirm: '了解しました'
+      studioLayerBackward: '後ろへ'
     },
     zh: {
       patchNotes: '更新日志',
@@ -1099,12 +1049,7 @@
       studioExportEmptyToast: '请先在舞台上放置角色。',
       studioExportFailToast: 'PNG导出失败。',
       studioLayerForward: '上移一层',
-      studioLayerBackward: '下移一层',
-      betaBadge: '测试版',
-      studioBetaWarning: '⚠ 工作室是测试版功能，目前仍在完善中，可能存在漏洞。',
-      studioBetaTitle: '工作室是测试版功能',
-      studioBetaBody: '工作室目前仍在开发中，可能会遇到意料之外的问题，例如背景或角色位置错位、导出失败等。如果发现任何问题，欢迎告诉我们！',
-      studioBetaConfirm: '知道了'
+      studioLayerBackward: '下移一层'
     }
   };
 
@@ -1452,25 +1397,6 @@
   }
   welcomeConfirmBtn.addEventListener('click', closeWelcomeModal);
 
-  // One-time notice (per browser) that the studio is a beta feature and may still have bugs.
-  // Shown the first time showStudio() runs; unlike showWelcomeModalIfNeeded, this one can be
-  // dismissed via the X button, backdrop click, or Escape, since it's a heads-up rather than a
-  // mandatory disclosure.
-  function showStudioBetaNoticeIfNeeded(){
-    let seen = null;
-    try{ seen = localStorage.getItem(STUDIO_BETA_SEEN_KEY); } catch(e){}
-    if (seen) return;
-    studioBetaOverlay.classList.add('show');
-  }
-  function closeStudioBetaNotice(){
-    studioBetaOverlay.classList.remove('show');
-    try{ localStorage.setItem(STUDIO_BETA_SEEN_KEY, '1'); } catch(e){}
-  }
-  studioBetaConfirmBtn.addEventListener('click', closeStudioBetaNotice);
-  studioBetaClose.addEventListener('click', closeStudioBetaNotice);
-  studioBetaOverlay.addEventListener('click', (e)=>{ if (e.target === studioBetaOverlay) closeStudioBetaNotice(); });
-  document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape' && studioBetaOverlay.classList.contains('show')) closeStudioBetaNotice(); });
-
   // A manifest entry with no skeleton/atlas file (or an explicit "comingSoon": true flag) is
   // treated as a placeholder: it still shows up in the gallery/tabs so 로하 can announce it
   // ahead of time, but clicking it pops up a notice instead of trying (and failing) to load it.
@@ -1647,7 +1573,6 @@
     initGL();
     resizeCanvas();
     renderStudioSlots();
-    showStudioBetaNoticeIfNeeded();
   }
 
   // Applies (or clears) the user-picked background image on the dedicated studioBgLayer div, and
@@ -2011,11 +1936,6 @@
       for (let t = SAMPLE_STEP; t <= sampleSpan; t += SAMPLE_STEP){
         animationState.update(SAMPLE_STEP);
         animationState.apply(skeleton);
-        // Required for the "physics settle into their natural sway" goal described above —
-        // without advancing skeleton.time via skeleton.update(), physics constraints see zero
-        // elapsed time every sampled step and never move at all (see the render-loop comments
-        // near c.skeleton.update(dt) for the full explanation).
-        skeleton.update(SAMPLE_STEP);
         skeleton.updateWorldTransform(spine.Physics.update);
         sampleBounds();
       }
@@ -3162,7 +3082,7 @@
   // 적용 직후·updateWorldTransform() 직전에 호출해, 어떤 애니메이션 클립이 이 제약들의 mix를 얼마로
   // 키프레임하든 상관없이 매 프레임 강제로 0(뮤트)으로 되돌린다. 로드 시점 self-test도 이제 이 함수를
   // 통해 뮤트 상태를 명시적으로 복구하도록 정리함 — 더 이상 "복구 후 방치"로 몰래 켜진 채 남지 않는다.
-  const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','atama-to-face','atama-to-backhead','atama-to-hear','cheek-to-head','cheek-to-face','cheek-to-backhead','cheek-to-hear'];
+  const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','atama-to-face','atama-to-backhead','atama-to-hear','atama-to-backhair','cheek-to-head','cheek-to-face','cheek-to-backhead','cheek-to-hear','cheek-to-backhair'];
   // Kept only for the load-time self-test's own before/after diagnostic (it needs to briefly turn
   // the native mix ON to prove the constraint *can* move bones at all) — never call this anywhere
   // else. Every real render path uses muteHeadFollowConstraints() below instead.
@@ -4189,22 +4109,19 @@
   // this instead reproduces just the intended visual — head/face/backhead/hear drifting a little
   // in the same direction as whichever bone (atama or cheek) is being dragged — entirely in local
   // bone-space offsets we control, with a fixed, safe strength.
-  // atama now also gets a follow entry (previously omitted on the assumption that the dedicated
-  // pet Spine clip already covers this — but atama is dragged directly, independent of that clip,
-  // and is expected to get the same head/face/backhead/hear follow that cheek already gets).
-  const FOLLOW_MAP = { cheek: ['head','face','backhead','hear'], atama: ['head','face','backhead','hear'] };
+  // atama (head pet) intentionally has no entry here anymore: pet has its own dedicated Spine
+  // animation clip, so this manual follow was purely an extra on-screen nudge layered on top of
+  // it — not something that exists in the editor. Removed so the pet reaction now matches the
+  // editor's animation exactly. cheek keeps it: cheek "pull" has no dedicated clip, just the
+  // spring offset, so face/backhead/hear following it is the only visual feedback it has.
+  const FOLLOW_MAP = { cheek: ['head','face','backhead','hear','backhair'] };
   const FOLLOW_MIX_X = 0.035;
-  // Vertical follow kept separate and clamped: a generous vertical mix was lifting 'head' enough
-  // to visibly expose a gap at the neck, since head's own art doesn't stretch to cover it.
-  // NOTE: this used to be nerfed all the way down to 0.001 mix / 0.001 clamp — small enough,
-  // relative to FOLLOW_MIX_X (0.035), that it read as "vertical follow doesn't work at all"
-  // (left/right moved the constraint fine, up/down never visibly did, regardless of how far atama/
-  // cheek were dragged). Restored to a real, visible mix. The clamp is now expressed as a fraction
-  // of the character's own bounding height (c.bounds.h, read inside applyManualFollow) instead of
-  // a fixed absolute number, so "how far is too far before it looks disconnected" scales with the
-  // character's size instead of being hand-tuned for one specific rig's pixel scale.
-  const FOLLOW_MIX_Y = 0.028;
-  const FOLLOW_MAX_Y_RATIO = 0.028; // vertical drift capped to ~2.8% of the character's bounding height
+  // Vertical follow kept separate and clamped: dragging atama upward was lifting 'head' enough
+  // to visibly expose a gap at the neck, since head's own art doesn't stretch to cover it. A
+  // much weaker mix plus a hard cap keeps the wobble readable without ever pulling head far
+  // enough off the body to look disconnected.
+  const FOLLOW_MIX_Y = 0.001;
+  const FOLLOW_MAX_Y = 0.001;
   function applyManualFollow(c, sourceName, off){
     const targets = FOLLOW_MAP[sourceName];
     if (!targets) return;
@@ -4230,13 +4147,8 @@
     }
     let worldFx = worldDx * FOLLOW_MIX_X;
     let worldFy = worldDy * FOLLOW_MIX_Y;
-    // Absolute cap derived from this character's own bounding height rather than a fixed magic
-    // number — see the FOLLOW_MAX_Y_RATIO comment above. Falls back to a small fixed value if
-    // bounds aren't available yet for some reason, so this never silently no-ops like the old
-    // 0.001 constant did.
-    const followMaxY = (c.bounds && c.bounds.h) ? c.bounds.h * FOLLOW_MAX_Y_RATIO : 20;
-    if (worldFy > followMaxY) worldFy = followMaxY;
-    else if (worldFy < -followMaxY) worldFy = -followMaxY;
+    if (worldFy > FOLLOW_MAX_Y) worldFy = FOLLOW_MAX_Y;
+    else if (worldFy < -FOLLOW_MAX_Y) worldFy = -FOLLOW_MAX_Y;
     // Convert the now screen-correct sideways/vertical amounts back into the shared local frame
     // (same parent as sourceBone, same matrix) before writing them onto each follow target's pose.
     let localFx = worldFx, localFy = worldFy;
@@ -4474,15 +4386,6 @@
       chars.forEach(c=>{
         c.animationState.update(dt);
         c.animationState.apply(c.skeleton);
-        // THE MISSING PIECE for physics constraints (hair/skirt jiggle) never moving at all: per
-        // Spine 4.2+'s own spec, PhysicsConstraint integrates using skeleton.time, which only
-        // advances via Skeleton#update(delta) — a SEPARATE call from animationState.update(dt)
-        // (which only advances animation track playback, not the skeleton's own physics clock).
-        // This call never existed anywhere in this file, so skeleton.time never moved and every
-        // physics constraint computed zero elapsed time every single frame — indistinguishable
-        // from physics being fully disabled, even though updateWorldTransform(spine.Physics.update)
-        // was being called correctly. Must run every frame, right after animationState.apply().
-        c.skeleton.update(dt);
         // Re-mute the moment any clip's keyframes may have set it non-zero (see
         // muteHeadFollowConstraints for the full "파츠 뜯어짐" root-cause writeup) — must run
         // after apply() (which is what would have re-enabled it) and before
@@ -4747,12 +4650,6 @@
     if (!c){ updateHints(null); return; }
     c.animationState.update(dt);
     c.animationState.apply(c.skeleton);
-    // Same fix as the studio loop — see the comment there for why this call (never present
-    // anywhere in this file before) is required for physics constraints (hair/skirt jiggle) to
-    // do anything at all: it advances skeleton.time, which is what PhysicsConstraint integrates
-    // against. Without it, physics constraints see zero elapsed time every frame and never move,
-    // regardless of updateWorldTransform(spine.Physics.update) being called correctly below.
-    c.skeleton.update(dt);
     // Same re-mute as the studio render loop — see muteHeadFollowConstraints for why this has to
     // run every frame, after apply() and before updateWorldTransform().
     muteHeadFollowConstraints(c.skeleton);
