@@ -1828,29 +1828,46 @@
         const face = skeleton.findBone('face');
         if (atama && head && face) {
           fixTransformConstraintMixes(skeleton); // apply the workaround before re-testing
-          skeleton.updateWorldTransform(spine.Physics.update);
+          skeleton.updateWorldTransform(spine.Physics.reset);
           console.log('[debug][transform-constraint] after fixTransformConstraintMixes(), mixX values:',
             tcs.map(tc => ({name: tc.data.name, dataMixX: tc.data.mixX, liveMixX: tc.mixX})));
           const before = { head: boneWorldPos(head), face: boneWorldPos(face) };
           const atamaPose = bonePose(atama);
           const savedX = atamaPose.x, savedY = atamaPose.y;
           atamaPose.x += 200; atamaPose.y += 200; // big, obvious nudge
-          skeleton.updateWorldTransform(spine.Physics.update);
+          // NOTE: this diagnostic nudge/restore pair used to run through spine.Physics.update,
+          // which reads the huge instantaneous (200,200) jump — and the equally huge snap-back
+          // right after — as two enormous single-frame velocities into every physics-constraint
+          // spring descended from head/hear (fronthair/sidehair/mimi/backhair/mitsuami all chain
+          // up through head — see the bone-parent dump in chat). That's exactly the same "huge
+          // per-frame delta reads as huge velocity" failure mode already fixed for body-drag
+          // (see isDragPinned/setPhysicsConstraintsMuted above), except this one fired at PAGE
+          // LOAD, before the character even rendered once — corrupting each spring's internal
+          // position/velocity bookkeeping so thoroughly that no amount of re-muting the transform
+          // constraint afterward could undo it (muting only blocks new input; it can't repair
+          // already-corrupted spring state). That's the actual explanation for "물리제약이 다
+          // 죽어버렸어" persisting no matter how HEAD_FOLLOW_CONSTRAINT_NAMES was toggled — the
+          // damage was already done here, once, at load, every single time. Fix: use
+          // spine.Physics.reset for both calls instead. Transform/IK constraints (what this test
+          // is actually checking) resolve identically either way; Physics.reset only changes how
+          // PHYSICS constraints react, snapping their internal state silently to match the new
+          // pose instead of reading the jump as velocity — so the test result is unaffected but
+          // no spring ever sees a fake 200px/frame "impact".
+          skeleton.updateWorldTransform(spine.Physics.reset);
           const after = { head: boneWorldPos(head), face: boneWorldPos(face) };
           // restore
           atamaPose.x = savedX; atamaPose.y = savedY;
-          skeleton.updateWorldTransform(spine.Physics.update);
+          skeleton.updateWorldTransform(spine.Physics.reset);
           const moved = before.head && after.head && (Math.abs(after.head.x - before.head.x) > 0.01 || Math.abs(after.head.y - before.head.y) > 0.01);
           console.log('[debug][transform-constraint] TEST: moved atama by (200,200) ->', moved ? '✅ head/face MOVED (constraint is working)' : '❌ head/face DID NOT MOVE (constraint is NOT being applied by this runtime)', {before, after});
           // Diagnostic test above deliberately turned the native mix ON (via
           // fixTransformConstraintMixes) to prove the constraint is capable of moving bones at
-          // all. That was previously left ON for the rest of the session — the actual root cause
-          // of parts tearing apart whenever an animation (pet_idle/pull_idle) later drove atama/
-          // cheek hard, since this constraint's math blows up at nonzero mix. Explicitly re-mute
-          // it now that the test is done; muteHeadFollowConstraints() also runs every frame in
-          // both render loops as the real, ongoing safeguard.
+          // all. muteHeadFollowConstraints() re-mutes only whichever constraint names are
+          // currently listed in HEAD_FOLLOW_CONSTRAINT_NAMES (now empty — see chat history: all
+          // 10 atama/cheek-to-* constraints are intentionally left live) — for anything not in
+          // that list this is a no-op, which is correct: those should stay on from here on.
           muteHeadFollowConstraints(skeleton);
-          skeleton.updateWorldTransform(spine.Physics.update);
+          skeleton.updateWorldTransform(spine.Physics.reset);
         } else {
           console.warn('[debug][transform-constraint] could not run live test — missing bone(s)', {atama:!!atama, cheek:!!cheek, head:!!head, face:!!face});
         }
