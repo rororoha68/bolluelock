@@ -1903,6 +1903,10 @@
           if (anchorPose) anchorPose.rotation += 15;
           for (let i=0;i<10;i++){
             animationState.update(1/30);
+            // Same missing call as the main render loop (see renderLoop) — without this, the test
+            // below would always report "DID NOT MOVE" even when physics is otherwise fine, since
+            // the constraint never receives any delta to simulate with.
+            skeleton.update(1/30);
             animationState.apply(skeleton);
             skeleton.updateWorldTransform(spine.Physics.update);
           }
@@ -4446,6 +4450,15 @@
       if (chars.length === 0){ updateHints(null); return; }
       chars.forEach(c=>{
         c.animationState.update(dt);
+        // Spine 4.2+ split physics timing out of AnimationState: PhysicsConstraint gets its
+        // per-frame delta from Skeleton.update(delta), NOT from AnimationState.update(dt). This
+        // call was missing entirely, which is the actual root cause of "물리제약이 안먹어" (hair/
+        // skirt physics bones just following their keyframed/parent rotation with zero spring lag
+        // or overshoot) — with no delta ever reaching the physics constraints, their internal
+        // simulation never advances a single tick no matter how many frames render. Must be called
+        // after AnimationState.update(dt) (which advances the clip's own time) and before
+        // AnimationState.apply()/updateWorldTransform() below, per Spine's own documented order.
+        c.skeleton.update(dt);
         c.animationState.apply(c.skeleton);
         // Re-mute the moment any clip's keyframes may have set it non-zero (see
         // muteHeadFollowConstraints for the full "파츠 뜯어짐" root-cause writeup) — must run
@@ -4710,6 +4723,10 @@
     const c = loadedCharacters.get(activeId);
     if (!c){ updateHints(null); return; }
     c.animationState.update(dt);
+    // See the identical call in the studio render loop above for why this is required: without
+    // it, PhysicsConstraint (hair/skirt jiggle) never receives a per-frame delta and never
+    // simulates at all — bones just render at their plain keyframed/FK position.
+    c.skeleton.update(dt);
     c.animationState.apply(c.skeleton);
     // Same re-mute as the studio render loop — see muteHeadFollowConstraints for why this has to
     // run every frame, after apply() and before updateWorldTransform().
