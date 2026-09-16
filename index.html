@@ -3635,6 +3635,13 @@
         if (bone && (bone.data || bone.parent)) seeds.add(bone);
       });
     });
+    // Physics-constraint bones are guarded too. They're the ones that actually strand themselves
+    // on this build (a jiggle bone left behind in world space while the body walks off), and a
+    // stranded bone is caught by exactly the same "way too far from where its parent says it
+    // should be" test. Normal jiggle is nowhere near the threshold.
+    try{
+      getPhysicsConstraintBones(skeleton).forEach(b => { if (b) seeds.add(b); });
+    } catch(e){ /* physics-constraint discovery is best-effort — guard still covers transform ones */ }
     const guarded = new Set(seeds);
     (skeleton.bones || []).forEach(b => {
       let p = b.parent;
@@ -4755,15 +4762,31 @@
         // Physics.reset's own internal reset bookkeeping is honored by this build. Called every
         // frame with the current isDragPinned value so it both mutes instantly when a drag starts
         // and restores the original mix the instant it ends.
-        setPhysicsConstraintsMuted(c.skeleton, isDragPinned);
+        // 2026-09 REVERSAL — the freeze machinery below was itself the "파츠 분리" bug.
+        // The console log settles it: this build's jiggle bones (ears/mimi, braid/mitsuami, back
+        // hair, skirt) are repositioned ONLY by their own PhysicsConstraint.update() — the comment
+        // further down already worked that out. Muting that update therefore doesn't calm the bone,
+        // it unplugs it from the skeleton entirely: it stays frozen at its last world position
+        // while the body animates on, which is exactly the ear and braid hanging off in mid-air in
+        // the report. And because pinReactionPhysics() fires on every motion change, tap, pet and
+        // cheek-pull — not just body drags — that freeze was being entered constantly during
+        // ordinary playback (the [debug][mute-verify] spam with its frame counter restarting over
+        // and over is that happening), not just while dragging.
+        // spine.Physics.reset on its own does the intended job without any of that: the spring's
+        // internal state is snapped to the character's current pose with zero implied velocity each
+        // pinned frame, so there's no sway and no fling, while update() keeps running and the bone
+        // keeps tracking its parent. So: never mute, and unmute anything a previous session of this
+        // code left muted.
+        setPhysicsConstraintsMuted(c.skeleton, false);
         // Local-pose corruption fix (root cause of the drift surviving mix=0 + the update()
         // no-op swap above): snapshot every physics-constraint bone's LOCAL pose right now, while
         // it's still clean (set by animationState.apply()/applyProceduralEffects() only, nothing
         // physics-related has touched it yet this frame). Whatever updateWorldTransform() does to
         // these bones below — mix/method muting notwithstanding — this snapshot lets us undo it.
-        const __pcPoseSnapshot = isDragPinned
-          ? getBonesNeedingRigidRecompute(c.skeleton).map(b => ({ bone: b, pose: snapshotBonePose(b) }))
-          : null;
+        // Snapshot disabled along with the muting above: it only existed to repair local poses that
+        // the muted-constraint path corrupted. With the constraint running normally there is
+        // nothing to repair, and freezing local poses here would fight the animation itself.
+        const __pcPoseSnapshot = null;
         c.skeleton.updateWorldTransform((isDragPinned || justUnpinned) ? spine.Physics.reset : spine.Physics.update);
         c.__justRepositioned = false;
         if (__pcPoseSnapshot){
@@ -4794,7 +4817,10 @@
         // in hierarchy order have already been updated to their new dragged position by the normal
         // skeleton pass, so this simply recomputes worldX/Y/rotation from the bone's current local
         // pose against that fresh parent transform — rigidly following the body, no jiggle, no lag.
-        if (isDragPinned){
+        // Rigid recompute disabled for the same reason: it was the workaround for bones that the
+        // mute had unplugged. guardConstraintBlowups() below is the remaining safety net, and it
+        // catches a stranded bone from any cause, not just this one.
+        if (false){
           // Was: getPhysicsConstraintBones(...).forEach(b => b.updateWorldTransform()) — that
           // called the runtime's own Bone method directly, which threw "Cannot read properties of
           // undefined (reading '_update')" (BonePose.ts:139) on every single frame of a body-drag
@@ -4813,7 +4839,11 @@
         // constraints, and (c) having any effect on the bone that was drifting worst before —
         // rather than assuming the previous fix worked. Logs once right when a drag starts, then
         // every ~15 frames while it continues.
-        if (isDragPinned){
+        // Verification logging disabled: its "drift" figure is the distance from a reference offset
+        // captured on the first pinned frame, which only means anything while the body is standing
+        // still (a real drag). During ordinary animation the body moves, so the number grows purely
+        // because the character is animating, and it flooded the console during normal playback.
+        if (false && isDragPinned){
           c.__verifyFrame = (c.__verifyFrame || 0) + 1;
           if (c.__verifyFrame === 1 || c.__verifyFrame % 15 === 0){
             const pcs = getPhysicsConstraints(c.skeleton);
