@@ -3529,12 +3529,17 @@
   // file for the same reason. Writes the result to both the bone itself and bone.appliedPose (when
   // present) so it's picked up regardless of which one the mesh renderer and this file's own
   // boneWorldPos/boneWorldMatrix helpers read from on this build.
-  function recomputeBoneWorldRigid(bone){
-    if (!bone || !bone.parent) return;
+  // Pure-math half of recomputeBoneWorldRigid: returns what this bone's world transform WOULD be
+  // under plain FK (its own current local pose composed onto its parent's current world
+  // transform), without writing anything. Split out so the constraint-blow-up guard below can
+  // compare a constraint's actual result against the plain-FK answer before deciding whether to
+  // overwrite it.
+  function computeBoneWorldRigid(bone){
+    if (!bone || !bone.parent) return null;
     const pose = bonePose(bone);
     const parentMatrix = boneWorldMatrix(bone.parent);
     const parentPos = boneWorldPos(bone.parent);
-    if (!pose || !parentMatrix || !parentPos) return;
+    if (!pose || !parentMatrix || !parentPos) return null;
     const rotation = pose.rotation || 0;
     const scaleX = Number.isFinite(pose.scaleX) ? pose.scaleX : 1;
     const scaleY = Number.isFinite(pose.scaleY) ? pose.scaleY : 1;
@@ -3542,17 +3547,177 @@
     const shearY = pose.shearY || 0;
     const local = localMatrixFromPose(rotation, scaleX, scaleY, shearX, shearY);
     const localX = pose.x || 0, localY = pose.y || 0;
-    const worldX = parentMatrix.a*localX + parentMatrix.b*localY + parentPos.x;
-    const worldY = parentMatrix.c*localX + parentMatrix.d*localY + parentPos.y;
-    const a = parentMatrix.a*local.a + parentMatrix.b*local.c;
-    const b = parentMatrix.a*local.b + parentMatrix.b*local.d;
-    const c = parentMatrix.c*local.a + parentMatrix.d*local.c;
-    const d = parentMatrix.c*local.b + parentMatrix.d*local.d;
+    const out = {
+      worldX: parentMatrix.a*localX + parentMatrix.b*localY + parentPos.x,
+      worldY: parentMatrix.c*localX + parentMatrix.d*localY + parentPos.y,
+      a: parentMatrix.a*local.a + parentMatrix.b*local.c,
+      b: parentMatrix.a*local.b + parentMatrix.b*local.d,
+      c: parentMatrix.c*local.a + parentMatrix.d*local.c,
+      d: parentMatrix.c*local.b + parentMatrix.d*local.d
+    };
+    if (!Number.isFinite(out.worldX) || !Number.isFinite(out.worldY) ||
+        !Number.isFinite(out.a) || !Number.isFinite(out.b) ||
+        !Number.isFinite(out.c) || !Number.isFinite(out.d)) return null;
+    return out;
+  }
+
+  // Writes a world transform onto both the bone itself and bone.appliedPose (when present), so
+  // it's picked up regardless of which one the mesh renderer and this file's own boneWorldPos/
+  // boneWorldMatrix helpers read from on this build.
+  function writeBoneWorld(bone, w){
+    if (!bone || !w) return;
     [bone, bone.appliedPose].forEach(target=>{
       if (!target) return;
-      target.worldX = worldX; target.worldY = worldY;
-      target.a = a; target.b = b; target.c = c; target.d = d;
+      target.worldX = w.worldX; target.worldY = w.worldY;
+      target.a = w.a; target.b = w.b; target.c = w.c; target.d = w.d;
     });
+  }
+
+  function recomputeBoneWorldRigid(bone){
+    writeBoneWorld(bone, computeBoneWorldRigid(bone));
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // "파츠 분리" (parts tearing off the body when a motion that drives transform constraints is
+  // played, most visibly in the studio) — the guard below.
+  //
+  // Background: this pinned spine-webgl 4.3.13 build's math for 4.3's new property-mapped
+  // transform constraints is unstable once the constraint's mix goes above 0 (documented in
+  // detail on muteHeadFollowConstraints above — it was caught on video blowing a target bone up
+  // to several times its size instead of nudging it). The old workaround was to mute those
+  // constraints outright, but that also threw away the follow motion the rig's author actually
+  // authored in the editor, so HEAD_FOLLOW_CONSTRAINT_NAMES is now intentionally empty and the
+  // constraints run live — which brings the blow-up back on exactly the clips that drive them
+  // hard (pet_idle/pull_idle and friends).
+  //
+  // Rather than choosing between "constraint on, sometimes explodes" and "constraint off, no
+  // follow at all", this catches the explosion itself: a transform constraint is only ever
+  // supposed to nudge its target bone slightly away from where plain FK would put it. So after
+  // updateWorldTransform() has run every constraint, each constrained bone's result is compared
+  // against its own plain-FK answer (computeBoneWorldRigid above). Small differences — the real,
+  // intended follow — are left completely untouched. Differences that are physically impossible
+  // for a subtle follow (bone flung a large fraction of the rig's own size away, or its world
+  // scale multiplied/collapsed) are discarded for that frame and replaced by the plain-FK
+  // transform, which is exactly "this part stays attached where its parent says it should be".
+  //
+  // Bones are processed parents-first and the check includes every DESCENDANT of a constrained
+  // bone, because a blown-up parent hands its garbage world matrix down the chain: once the
+  // parent is snapped back to FK, each child's inherited (still blown-up) transform now differs
+  // wildly from its own freshly-computed FK answer, so the correction cascades down the rest of
+  // the limb/hair chain on the same pass.
+  const CONSTRAINT_GUARD_SCALE_MAX = 1.8;   // world scale may not exceed the FK scale by more than this
+  const CONSTRAINT_GUARD_SCALE_MIN = 0.55;  // ...nor collapse below it by more than this
+  const CONSTRAINT_GUARD_OFFSET_RATIO = 0.15; // ...nor move more than this fraction of the rig's own size
+  const CONSTRAINT_GUARD_MIN_OFFSET = 30;   // floor for the above, for very small rigs
+
+  // Every bone a transform constraint targets, plus all of their descendants, sorted parents
+  // first. Cached on the skeleton — the bone hierarchy and constraint list never change after
+  // load. Matches on the runtime class name (same approach as getPhysicsConstraints above)
+  // instead of on constraint names, so it covers any rig, not just this one's atama/cheek setup.
+  function getConstraintGuardBones(skeleton){
+    if (skeleton.__constraintGuardBones) return skeleton.__constraintGuardBones;
+    const all = [].concat(
+      Array.isArray(skeleton.transformConstraints) ? skeleton.transformConstraints : [],
+      Array.isArray(skeleton.constraints) ? skeleton.constraints : []
+    );
+    const seeds = new Set();
+    all.forEach(tc => {
+      if (!tc) return;
+      const ctorName = (tc.constructor && tc.constructor.name) || '';
+      const dataCtorName = (tc.data && tc.data.constructor && tc.data.constructor.name) || '';
+      if (!/transformconstraint/i.test(ctorName) && !/transformconstraint/i.test(dataCtorName)) return;
+      // Constrained bones show up either as plain Bones or as BonePose wrappers with a .bone
+      // back-reference, depending on the build — same ambiguity the load-time self-test already
+      // has to deal with when it prints constraint bone names.
+      const list = [].concat(Array.isArray(tc.bones) ? tc.bones : [], tc.bone ? [tc.bone] : []);
+      list.forEach(entry => {
+        const bone = (entry && entry.bone) ? entry.bone : entry;
+        if (bone && (bone.data || bone.parent)) seeds.add(bone);
+      });
+    });
+    const guarded = new Set(seeds);
+    (skeleton.bones || []).forEach(b => {
+      let p = b.parent;
+      while (p){
+        if (seeds.has(p)){ guarded.add(b); break; }
+        p = p.parent;
+      }
+    });
+    const sorted = Array.from(guarded).sort((a, b) => boneDepth(a) - boneDepth(b));
+    skeleton.__constraintGuardBones = sorted;
+    return sorted;
+  }
+
+  // The rig's own on-stage size, used to scale the "how far is too far" threshold so it means the
+  // same thing on a large character as on a small one, and stays correct as the studio size
+  // slider changes the skeleton's scale.
+  function constraintGuardReferenceSize(c){
+    // __studioExpectedW/H are the character's size *at its current studio scale*, so they're the
+    // right reference there — but they stick around on the character object after leaving the
+    // studio, where the skeleton is back at its own scale, so they're only trusted in studio mode.
+    const fromStudio = mode === 'studio' ? Math.max(c.__studioExpectedW || 0, c.__studioExpectedH || 0) : 0;
+    if (fromStudio > 1) return fromStudio;
+    const b = c.bounds;
+    const fromBounds = b ? Math.max(b.w || 0, b.h || 0) : 0;
+    return fromBounds > 1 ? fromBounds : 400;
+  }
+
+  // Call once per character per frame, right AFTER updateWorldTransform() (so every constraint
+  // has had its say) and BEFORE anything that reads the final pose — drawing, hit anchors, or the
+  // studio's rotation post-process.
+  // Puts back the world transforms the studio's rotation post-process overwrote for this frame's
+  // draw. Safe to call on a character that wasn't rotated (no-op) and on every frame regardless
+  // of whether the rotation slider is at 0.
+  function restoreStudioRotation(c){
+    if (!c || !c.__rotationApplied) return;
+    c.__rotationApplied = false;
+    const restore = c.__rotationRestore;
+    if (!restore) return;
+    for (let i = 0; i < restore.length; i++){
+      const r = restore[i];
+      if (!r || !r.target) continue;
+      r.target.worldX = r.worldX; r.target.worldY = r.worldY;
+      r.target.a = r.a; r.target.b = r.b; r.target.c = r.c; r.target.d = r.d;
+    }
+    restore.length = 0;
+  }
+
+  function guardConstraintBlowups(c){
+    const skeleton = c && c.skeleton;
+    if (!skeleton) return;
+    const bones = getConstraintGuardBones(skeleton);
+    if (!bones.length) return;
+    const maxOffset = Math.max(CONSTRAINT_GUARD_MIN_OFFSET, constraintGuardReferenceSize(c) * CONSTRAINT_GUARD_OFFSET_RATIO);
+    let corrected = 0;
+    bones.forEach(bone => {
+      const fk = computeBoneWorldRigid(bone);
+      if (!fk) return;
+      const src = (bone.appliedPose && Number.isFinite(bone.appliedPose.worldX)) ? bone.appliedPose : bone;
+      const live = {worldX: src.worldX, worldY: src.worldY, a: src.a, b: src.b, c: src.c, d: src.d};
+      const liveFinite = Object.keys(live).every(k => Number.isFinite(live[k]));
+      let bad = !liveFinite;
+      if (!bad){
+        if (Math.hypot(live.worldX - fk.worldX, live.worldY - fk.worldY) > maxOffset) bad = true;
+      }
+      if (!bad){
+        // Compare the length of each world-matrix column (i.e. the bone's effective world scale
+        // along its own local x and y axes) against the FK answer. A runaway constraint shows up
+        // here as a multiplied (or collapsed) column long before it looks subtle on screen.
+        const pairs = [[Math.hypot(live.a, live.c), Math.hypot(fk.a, fk.c)], [Math.hypot(live.b, live.d), Math.hypot(fk.b, fk.d)]];
+        for (const [liveLen, fkLen] of pairs){
+          if (!(fkLen > 1e-6)) continue;
+          const ratio = liveLen / fkLen;
+          if (ratio > CONSTRAINT_GUARD_SCALE_MAX || ratio < CONSTRAINT_GUARD_SCALE_MIN){ bad = true; break; }
+        }
+      }
+      if (!bad) return;
+      writeBoneWorld(bone, fk);
+      corrected++;
+    });
+    if (corrected && !c.__constraintGuardLogged){
+      c.__constraintGuardLogged = true;
+      console.warn('[constraint-guard]', c.id, '— snapped', corrected, 'bone(s) back to FK on this frame (runaway transform constraint). Threshold:', Math.round(maxOffset), 'units. Logged once per character.');
+    }
   }
 
   // Inverse of the above, composed with a parent: given the world 2x2 matrix we *want* this bone
@@ -4732,6 +4897,11 @@
             c.skeleton.updateWorldTransform(spine.Physics.reset);
           }
         }
+        // Catch any bone a transform constraint just flung off the body (the "파츠 분리" symptom
+        // when a clip drives atama/cheek hard) and snap it back onto its parent. Must run before
+        // the rotation post-process below, so that block rotates an already-intact pose — and
+        // before updateHitAnchors/drawing, so taps and the rendered image agree.
+        guardConstraintBlowups(c);
         // Studio rotation slider: NOT applied as a root-bone rotation (tried that first — see the
         // git history for the old approach). Setting root.rotation before updateWorldTransform()
         // silently did nothing on every rig: this skeleton's bones are driven by IK/transform
@@ -4753,6 +4923,20 @@
               const rad = degToRad(c.studioRotation);
               const cos = Math.cos(rad), sin = Math.sin(rad);
               const px = c.bounds.x + c.bounds.w/2, py = c.bounds.y + c.bounds.h/2;
+              // Every bone this block is about to overwrite is remembered here first, and put back
+              // right after the draw (see restoreStudioRotation() below renderer.end()). Reason:
+              // this rotation writes into the exact same worldX/worldY/a/b/c/d fields that the
+              // NEXT frame's constraint pass reads as its "where was this bone last frame"
+              // reference — PhysicsConstraint in particular derives its spring velocity from
+              // precisely that comparison. Leaving the rotated values in place therefore fed every
+              // jiggle bone (ears, hair, tail) a fake velocity equal to the whole rotation offset,
+              // every single frame, which is what flung those parts off the body as soon as a
+              // rotated character played a motion. Restoring the unrotated values after drawing
+              // keeps the rotation purely visual: the renderer sees the rotated pose, the physics
+              // and constraint math on the next frame see the clean one.
+              const restore = c.__rotationRestore || (c.__rotationRestore = []);
+              restore.length = 0;
+              c.__rotationApplied = true;
               c.skeleton.bones.forEach(b=>{
                 // 4.3: world transform (worldX/worldY/a/b/c/d) lives on bone.appliedPose, not on
                 // the bare bone object — same story as boneWorldPos/boneWorldMatrix above. Reading
@@ -4771,6 +4955,14 @@
                 // transform hasn't been computed yet on the very first frame) — skip that single
                 // bone rather than let one bad value corrupt the whole skeleton's draw.
                 if ([newWorldX,newWorldY,newA,newB,newC,newD].every(Number.isFinite)){
+                  restore.push({target: bSrc, worldX: bSrc.worldX, worldY: bSrc.worldY, a: a, b: bb, c: cc, d: d});
+                  // The bare bone object is written too when it carries its own copy of the world
+                  // transform, since parts of this file (and some runtime paths) read it there.
+                  if (bSrc !== b && Number.isFinite(b.worldX)){
+                    restore.push({target: b, worldX: b.worldX, worldY: b.worldY, a: b.a, b: b.b, c: b.c, d: b.d});
+                    b.worldX = newWorldX; b.worldY = newWorldY;
+                    b.a = newA; b.b = newB; b.c = newC; b.d = newD;
+                  }
                   bSrc.worldX = newWorldX; bSrc.worldY = newWorldY;
                   bSrc.a = newA; bSrc.b = newB; bSrc.c = newC; bSrc.d = newD;
                 }
@@ -4789,6 +4981,10 @@
       renderer.begin();
       chars.forEach(c=>renderer.drawSkeleton(c.skeleton));
       renderer.end();
+      // Undo the purely-visual rotation applied above, now that the frame is drawn — see the big
+      // comment at the top of that block for why leaving it in place tore jiggle parts off the
+      // body on the following frame.
+      chars.forEach(restoreStudioRotation);
       // Per-character hint dots aren't wired up for the studio yet (hintLayer currently tracks a
       // single character) — cleared here rather than left showing a stale single dot.
       updateHints(null);
@@ -4808,6 +5004,10 @@
     muteHeadFollowConstraints(c.skeleton);
     applyProceduralEffects(c, dt);
     c.skeleton.updateWorldTransform(spine.Physics.update);
+    // Same runaway-transform-constraint guard the studio loop runs — the instability is in the
+    // runtime's constraint math, not in anything studio-specific, so the single-character viewer
+    // needs it on exactly the same clips.
+    guardConstraintBlowups(c);
     updateHitAnchors(c);
 
     renderer.begin();
