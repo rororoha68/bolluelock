@@ -15,6 +15,22 @@
     ]
   },
   {
+    "id": "bachira",
+    "name": { "ko": "바치라", "en": "Bachira", "ja": "蜂楽", "zh": "蜂乐" },
+    "folder": "characters/bachira",
+    "skeletonFile": "BCR.json",
+    "atlasFile": "BCR.atlas",
+    "description": { "ko": "활발, 유령", "en": "Vivacious, Phantoms", "ja": "活発, ゴースト", "zh": "活泼, 幽灵" },
+    "thumbnail": "thumbnail.png",
+    "defaultAnimation": "idle",
+    "defaultSkin": "base",
+    "teaserFocus": "50% 20%",
+    "skins": [
+      { "name": "base", "label": { "ko": "기본", "en": "Default", "ja": "基本", "zh": "基础" }, "description": { "ko": "바치라 메구루", "en": "Meguru Bachira", "ja": "蜂楽 廻", "zh": "蜂乐回" } },
+      { "name": "human", "label": { "ko": "인간", "en": "Human", "ja": "人間", "zh": "人" }, "description": { "ko": "바치라 (인간의 모습)", "en": "Bachira (Human form)", "ja": "蜂楽 (人間の姿)", "zh": "蜂乐 (人的样子)" } }
+    ]
+  },
+  {
     "id": "isagi",
     "name": { "ko": "이사기", "en": "Isagi", "ja": "潔", "zh": "洁" },
     "folder": "characters/isagi",
@@ -30,24 +46,6 @@
     "skins": [
       { "name": "base", "label": { "ko": "기본", "en": "Default", "ja": "基本", "zh": "基础" }, "description": { "ko": "이사기 요이치", "en": "Yoichi Isagi", "ja": "潔 世一", "zh": "洁世一" } },
       { "name": "human", "label": { "ko": "인간", "en": "Human", "ja": "人間", "zh": "人" }, "description": { "ko": "이사기 (인간의 모습)", "en": "Isagi (Human form)", "ja": "潔 (人間の姿)", "zh": "洁 (人的样子)" } }
-    ]
-  },
-  {
-    "id": "bachira",
-    "name": { "ko": "바치라", "en": "Bachira", "ja": "蜂楽", "zh": "蜂乐" },
-    "folder": "characters/bachira",
-    "skeletonFile": "BCR.json",
-    "atlasFile": "BCR.atlas",
-    "description": { "ko": "활발, 유령", "en": "Vivacious, Phantoms", "ja": "活発, ゴースト", "zh": "活泼, 幽灵" },
-    "thumbnail": "thumbnail.png",
-    "defaultAnimation": "idle",
-    "defaultSkin": "base",
-    "comingSoon": true,
-    "teaserImage": "teaser.png",
-    "teaserFocus": "50% 20%",
-    "skins": [
-      { "name": "base", "label": { "ko": "기본", "en": "Default", "ja": "基本", "zh": "基础" }, "description": { "ko": "바치라 메구루", "en": "Meguru Bachira", "ja": "蜂楽 廻", "zh": "蜂乐回" } },
-      { "name": "human", "label": { "ko": "인간", "en": "Human", "ja": "人間", "zh": "人" }, "description": { "ko": "바치라 (인간의 모습)", "en": "Bachira (Human form)", "ja": "蜂楽 (人間の姿)", "zh": "蜂乐 (人的样子)" } }
     ]
   },
   {
