@@ -175,6 +175,23 @@
   }
   .studio-nav-btn:hover{ border-color:var(--accent-2); }
   .studio-nav-btn.active{ border-color:var(--accent); color:var(--accent); }
+  /* "BETA" marker. Uppercase Latin in every language on purpose — it reads as a status tag
+     rather than a translated word, so it stays identical across ko/en/ja/zh. */
+  .beta-badge{
+    display:inline-block; vertical-align:middle;
+    margin-left:6px; padding:2px 7px; border-radius:999px;
+    background:rgba(94,234,212,0.14); border:1px solid var(--accent-2); color:var(--accent-2);
+    font-family:'Inter', system-ui, sans-serif;
+    font-size:10px; font-weight:700; letter-spacing:.06em; line-height:1.4;
+    text-transform:uppercase; white-space:nowrap;
+  }
+  .studio-nav-btn .beta-badge{ font-size:9.5px; padding:1px 6px; }
+  /* The studio button's label and its badge must stay on one line together even when a
+     translated label is long, hence the inline-flex wrapper rather than plain inline text. */
+  .studio-nav-btn{ display:inline-flex; align-items:center; }
+  .beta-notice-list{ margin:12px 0 0; padding-left:20px; }
+  .beta-notice-list li{ margin-bottom:8px; }
+  .beta-notice-list li:last-child{ margin-bottom:0; }
   .char-select{
     flex:0 0 auto;
     background:var(--panel);
@@ -506,9 +523,29 @@
     </div>
   </div>
 
+  <!-- First-entry notice for the studio. Unlike the site-wide welcome modal this one *is*
+       dismissible (X / backdrop / Escape), since it's a heads-up about a beta feature rather
+       than a disclosure the person has to acknowledge before seeing anything. Shown once per
+       browser, remembered in localStorage. -->
+  <div class="modal-overlay" id="studioBetaOverlay">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2><span data-i18n="studioBetaTitle"></span><span class="beta-badge">Beta</span></h2>
+        <button class="modal-close" id="studioBetaClose" type="button" data-i18n-attr-aria-label="closeLabel">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="dock-desc" style="margin:0 0 18px; font-size:13.5px; line-height:1.7; color:var(--text);" data-i18n-html="studioBetaBody"></div>
+        <button type="button" class="update-banner-btn" id="studioBetaConfirmBtn" style="width:100%; padding:10px 16px;" data-i18n="studioBetaConfirm"></button>
+      </div>
+    </div>
+  </div>
+
   <div class="char-tabs" id="charTabs">
     <select class="char-select" id="charSelect" aria-label="Character"></select>
-    <button class="studio-nav-btn" id="studioNavBtn" type="button" data-i18n="studioNav"></button>
+    <!-- The label lives in its own <span> because applyStaticI18n() sets textContent on every
+         [data-i18n] element — putting the badge inside the button directly would get wiped on
+         every language change. -->
+    <button class="studio-nav-btn" id="studioNavBtn" type="button"><span data-i18n="studioNav"></span><span class="beta-badge">Beta</span></button>
   </div>
 
   <section class="gallery" id="galleryView">
@@ -557,7 +594,7 @@
       </section>
       <section class="dock-panel" id="studioPanel" style="display:none;">
         <div class="studio-panel-head">
-          <h2 data-i18n="studioTitle"></h2>
+          <h2><span data-i18n="studioTitle"></span><span class="beta-badge">Beta</span></h2>
           <div class="studio-panel-actions">
             <button type="button" class="anim-btn" id="studioExportBtn" data-i18n="studioExportBtn"></button>
             <button type="button" class="anim-btn" id="studioResetBgPositionBtn" data-i18n="studioResetBgPositionBtn"></button>
@@ -676,7 +713,11 @@
   const studioPickCharSelect = document.getElementById('studioPickCharSelect');
   const studioPickSkinSelect = document.getElementById('studioPickSkinSelect');
   const studioPickConfirmBtn = document.getElementById('studioPickConfirmBtn');
+  const studioBetaOverlay = document.getElementById('studioBetaOverlay');
+  const studioBetaClose = document.getElementById('studioBetaClose');
+  const studioBetaConfirmBtn = document.getElementById('studioBetaConfirmBtn');
   const WELCOME_SEEN_KEY = 'chr-playroom-welcome-seen';
+  const STUDIO_BETA_SEEN_KEY = 'chr-playroom-studio-beta-seen';
   const PATCH_NOTES_SEEN_KEY = 'chr-playroom-last-seen-patch';
   // When a newer patch version is spotted while the page is already open, its version string is
   // stashed here so that the *next* full page load (i.e. the refresh the banner is asking for)
@@ -841,6 +882,9 @@
       studioExportToast: 'PNG로 저장했어요.',
       studioExportEmptyToast: '무대에 캐릭터를 먼저 배치해주세요.',
       studioExportFailToast: 'PNG 내보내기에 실패했어요.',
+      studioBetaTitle: '스튜디오 안내',
+      studioBetaBodyHtml: '스튜디오는 아직 <strong>베타 기능</strong>이에요. 사용하기 전에 아래 내용을 확인해주세요.<ul class="beta-notice-list"><li>무대에 세운 캐릭터·배경·위치·크기는 <strong>저장되지 않아요.</strong> 새로고침하거나 창을 닫으면 빈 무대로 돌아가니, 마음에 드는 장면은 <strong>PNG로 내보내기</strong>로 먼저 저장해주세요.</li><li>캐릭터를 여러 명 세우면 기기에 따라 화면이 버벅일 수 있어요. 데스크톱 환경을 권해요.</li><li>모션이나 파츠가 어긋나 보이는 등 아직 다듬고 있는 부분이 있어요.</li><li>기능과 화면 구성은 예고 없이 바뀔 수 있어요.</li></ul>',
+      studioBetaConfirm: '확인했어요',
       studioLayerForward: '앞으로',
       studioLayerBackward: '뒤로'
     },
@@ -910,6 +954,9 @@
       studioExportToast: 'Saved as PNG.',
       studioExportEmptyToast: 'Place a character on stage first.',
       studioExportFailToast: 'Failed to export PNG.',
+      studioBetaTitle: 'About the Studio',
+      studioBetaBodyHtml: 'The Studio is still a <strong>beta feature</strong>. A few things to know before you start.<ul class="beta-notice-list"><li>Characters, backgrounds, positions, and sizes on the stage are <strong>not saved.</strong> Refreshing or closing the tab brings you back to an empty stage, so use <strong>Export as PNG</strong> to keep a scene you like.</li><li>Placing several characters at once may feel choppy depending on your device. A desktop is recommended.</li><li>Some parts are still being polished — motions or body parts may look slightly off.</li><li>Features and layout may change without notice.</li></ul>',
+      studioBetaConfirm: 'Got it',
       studioLayerForward: 'Forward',
       studioLayerBackward: 'Backward'
     },
@@ -979,6 +1026,9 @@
       studioExportToast: 'PNGとして保存しました。',
       studioExportEmptyToast: '先にステージにキャラクターを配置してください。',
       studioExportFailToast: 'PNGの書き出しに失敗しました。',
+      studioBetaTitle: 'スタジオのお知らせ',
+      studioBetaBodyHtml: 'スタジオはまだ<strong>ベータ機能</strong>です。ご利用の前に以下をご確認ください。<ul class="beta-notice-list"><li>ステージに並べたキャラクター・背景・位置・サイズは<strong>保存されません。</strong>再読み込みやタブを閉じると空のステージに戻るため、気に入った場面は先に<strong>PNGで書き出し</strong>から保存してください。</li><li>キャラクターを複数並べると、端末によっては動作が重くなることがあります。デスクトップ環境を推奨します。</li><li>モーションやパーツの表示がずれるなど、まだ調整中の部分があります。</li><li>機能や画面構成は予告なく変更される場合があります。</li></ul>',
+      studioBetaConfirm: '確認しました',
       studioLayerForward: '前へ',
       studioLayerBackward: '後ろへ'
     },
@@ -1048,6 +1098,9 @@
       studioExportToast: '已保存为PNG。',
       studioExportEmptyToast: '请先在舞台上放置角色。',
       studioExportFailToast: 'PNG导出失败。',
+      studioBetaTitle: '工作室提示',
+      studioBetaBodyHtml: '工作室仍是<strong>测试版功能</strong>。使用前请先了解以下内容。<ul class="beta-notice-list"><li>舞台上的角色、背景、位置和大小<strong>不会被保存。</strong>刷新或关闭页面后会回到空舞台，喜欢的画面请先用<strong>导出为PNG</strong>保存。</li><li>同时放置多个角色时，部分设备可能会出现卡顿，建议使用桌面端。</li><li>动作或部件显示可能出现偏移，仍在调整中。</li><li>功能与界面可能会不预先通知即变更。</li></ul>',
+      studioBetaConfirm: '我知道了',
       studioLayerForward: '上移一层',
       studioLayerBackward: '下移一层'
     }
@@ -1397,6 +1450,27 @@
   }
   welcomeConfirmBtn.addEventListener('click', closeWelcomeModal);
 
+  // Heads-up shown the first time someone opens the studio, since it's a beta feature whose
+  // stage contents deliberately don't persist. Remembered in localStorage so it only ever
+  // interrupts once; if storage is unavailable (private mode, etc.) the notice simply shows
+  // again next time rather than breaking the studio.
+  function showStudioBetaNoticeIfNeeded(){
+    let seen = null;
+    try{ seen = localStorage.getItem(STUDIO_BETA_SEEN_KEY); } catch(e){}
+    if (seen) return;
+    // Never stack on top of the first-visit site notice — that one has to be confirmed first.
+    if (welcomeOverlay.classList.contains('show')) return;
+    studioBetaOverlay.classList.add('show');
+    // Marked as seen on open rather than on close: the notice is dismissible in several ways
+    // (X, backdrop, Escape), and every one of them counts as having read it.
+    try{ localStorage.setItem(STUDIO_BETA_SEEN_KEY, '1'); } catch(e){}
+  }
+  function closeStudioBetaNotice(){ studioBetaOverlay.classList.remove('show'); }
+  studioBetaConfirmBtn.addEventListener('click', closeStudioBetaNotice);
+  studioBetaClose.addEventListener('click', closeStudioBetaNotice);
+  studioBetaOverlay.addEventListener('click', (e)=>{ if (e.target === studioBetaOverlay) closeStudioBetaNotice(); });
+  document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape' && studioBetaOverlay.classList.contains('show')) closeStudioBetaNotice(); });
+
   // A manifest entry with no skeleton/atlas file (or an explicit "comingSoon": true flag) is
   // treated as a placeholder: it still shows up in the gallery/tabs so 로하 can announce it
   // ahead of time, but clicking it pops up a notice instead of trying (and failing) to load it.
@@ -1573,6 +1647,7 @@
     initGL();
     resizeCanvas();
     renderStudioSlots();
+    showStudioBetaNoticeIfNeeded();
   }
 
   // Applies (or clears) the user-picked background image on the dedicated studioBgLayer div, and
