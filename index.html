@@ -4873,11 +4873,23 @@
             c.skeleton.updateWorldTransform(spine.Physics.reset);
           }
         }
-        // Catch any bone a transform constraint just flung off the body (the "파츠 분리" symptom
-        // when a clip drives atama/cheek hard) and snap it back onto its parent. Must run before
-        // the rotation post-process below, so that block rotates an already-intact pose — and
-        // before updateHitAnchors/drawing, so taps and the rendered image agree.
-        guardConstraintBlowups(c);
+        // 2026-09 DISABLED — guardConstraintBlowups() itself caused a worse corruption than the
+        // problem it was guarding against (caught on video: right after its one console.warn
+        // fired, the character collapsed into a tiny curled ball for several frames, then briefly
+        // filled the whole screen before recovering). Root cause: the seed bones for this guard
+        // (atama/cheek, the transform-constraint targets) are NOT skeletal parents of the head/
+        // face/hair bones they were meant to protect — that relationship only ever existed through
+        // the transform constraint itself, which is confirmed INERT on this runtime (see the
+        // [debug][transform-constraint] TEST log: moving atama does not move head/face at all).
+        // So "every descendant of atama/cheek in the parent-chain sense" is the wrong bone set
+        // entirely, and forcing wrong bones to computeBoneWorldRigid's plain-FK answer produced
+        // exactly the kind of snap/corruption it was supposed to prevent. Since transform
+        // constraints can't blow up (they don't run), there's nothing left here worth guarding —
+        // the actual physics-constraint teleport case is handled separately and correctly by the
+        // isTeleportPinned mute+recompute below. Left the function defined further down, just
+        // unused, rather than deleting it outright, in case a future rig needs the sound half of
+        // this idea (bad-bone detection) built on a correct bone set.
+        // guardConstraintBlowups(c);
         // Studio rotation slider: NOT applied as a root-bone rotation (tried that first — see the
         // git history for the old approach). Setting root.rotation before updateWorldTransform()
         // silently did nothing on every rig: this skeleton's bones are driven by IK/transform
@@ -4980,10 +4992,10 @@
     muteHeadFollowConstraints(c.skeleton);
     applyProceduralEffects(c, dt);
     c.skeleton.updateWorldTransform(spine.Physics.update);
-    // Same runaway-transform-constraint guard the studio loop runs — the instability is in the
-    // runtime's constraint math, not in anything studio-specific, so the single-character viewer
-    // needs it on exactly the same clips.
-    guardConstraintBlowups(c);
+    // guardConstraintBlowups(c) call removed — see the matching comment in the studio render
+    // loop above for why: it was guarding the wrong bone set (atama/cheek's parent-chain
+    // descendants, not the bones the inert transform constraint was ever meant to affect) and
+    // that mismatch caused worse corruption than it prevented.
     updateHitAnchors(c);
 
     renderer.begin();
