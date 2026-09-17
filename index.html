@@ -4730,119 +4730,65 @@
         // pinReactionPhysics()/REACTION_PIN_MS and the comment on animationStateData.defaultMix
         // for why this needs the same Physics.reset treatment held for the crossfade's whole
         // duration, not just the first frame of it.
-        const isDragPinned = !!(c.__justRepositioned || c.__slotDragActive ||
-          (c.__reactionPinnedUntil && now < c.__reactionPinnedUntil));
-        // THE FIX for "드래그 직후에만 뒷머리가 찢어짐" (tears specifically the instant a body-drag
-        // ends, only on physics-constraint bones): while isDragPinned is true, setPhysicsConstraintsMuted
-        // below swaps each PhysicsConstraint's own update() method for a complete no-op (see that
-        // function's comment) — meaning the spring's OWN internal "last known position/velocity"
-        // bookkeeping is 100% frozen for the entire drag, no matter how far the character actually
-        // moved, since our separate recomputeBoneWorldRigid() pass only fixes what's drawn on
-        // screen, never touches the constraint's internal state. The instant the drag ends and the
-        // real update() is restored, THAT frame's first real physics update compares its stale,
-        // frozen pre-drag position against the bone's true (now far away) current position and
-        // reads the whole drag distance as one huge single-frame velocity — exactly the fling/tear
-        // seen right after releasing a drag. Fix: on precisely the one transition frame where
-        // pinning just turned off (wasDragPinned true, isDragPinned now false), run ONE
-        // spine.Physics.reset pass with the constraint UNMUTED (not spine.Physics.update) — this
-        // lets the real, now-active constraint code resync its internal position/velocity to the
-        // character's actual current pose with zero implied velocity, instead of jumping straight
-        // to Physics.update and reading that resync gap as a spring impulse. Every following frame
-        // proceeds through the normal isDragPinned-false / Physics.update path as before.
-        const justUnpinned = !!c.__wasDragPinned && !isDragPinned;
-        c.__wasDragPinned = isDragPinned;
-        // Belt-and-suspenders: spine.Physics.reset alone does NOT fully suppress this rig's
-        // PhysicsConstraint-driven hair/skirt sway during a fast body-drag on this pinned
-        // spine-webgl 4.3.13 build — confirmed via a bone-drift diagnostic that caught the back
-        // hair bones (backhairL2-4/R2-4/SR2-5, all real `_PhysicsConstraint` instances per a
-        // dump of skeleton.constraints) lagging farther and farther behind the body every frame
-        // while dragging (growing drift, unchanged local pose) — the classic signature of a
-        // spring constraint still running despite Physics.reset. setPhysicsConstraintsMuted()
-        // forces every physics constraint's mix to 0 directly, independent of whether
-        // Physics.reset's own internal reset bookkeeping is honored by this build. Called every
-        // frame with the current isDragPinned value so it both mutes instantly when a drag starts
-        // and restores the original mix the instant it ends.
-        // 2026-09 REVERSAL — the freeze machinery below was itself the "파츠 분리" bug.
-        // The console log settles it: this build's jiggle bones (ears/mimi, braid/mitsuami, back
-        // hair, skirt) are repositioned ONLY by their own PhysicsConstraint.update() — the comment
-        // further down already worked that out. Muting that update therefore doesn't calm the bone,
-        // it unplugs it from the skeleton entirely: it stays frozen at its last world position
-        // while the body animates on, which is exactly the ear and braid hanging off in mid-air in
-        // the report. And because pinReactionPhysics() fires on every motion change, tap, pet and
-        // cheek-pull — not just body drags — that freeze was being entered constantly during
-        // ordinary playback (the [debug][mute-verify] spam with its frame counter restarting over
-        // and over is that happening), not just while dragging.
-        // spine.Physics.reset on its own does the intended job without any of that: the spring's
-        // internal state is snapped to the character's current pose with zero implied velocity each
-        // pinned frame, so there's no sway and no fling, while update() keeps running and the bone
-        // keeps tracking its parent. So: never mute, and unmute anything a previous session of this
-        // code left muted.
-        setPhysicsConstraintsMuted(c.skeleton, false);
-        // Local-pose corruption fix (root cause of the drift surviving mix=0 + the update()
-        // no-op swap above): snapshot every physics-constraint bone's LOCAL pose right now, while
-        // it's still clean (set by animationState.apply()/applyProceduralEffects() only, nothing
-        // physics-related has touched it yet this frame). Whatever updateWorldTransform() does to
-        // these bones below — mix/method muting notwithstanding — this snapshot lets us undo it.
-        // Snapshot disabled along with the muting above: it only existed to repair local poses that
-        // the muted-constraint path corrupted. With the constraint running normally there is
-        // nothing to repair, and freezing local poses here would fight the animation itself.
-        const __pcPoseSnapshot = null;
+        // 2026-09: split into TWO separate kinds of "pin" that were previously lumped into one
+        // isDragPinned flag, because they need opposite treatment on this build:
+        //
+        //  - TELEPORT pin (c.__justRepositioned / c.__slotDragActive): the skeleton's position
+        //    and/or scale (c.skeleton.x/y/scaleX/scaleY) just jumped discontinuously — a body
+        //    drag, or the studio's size/position controls (layoutStudioSlots). A physics-
+        //    constraint bone's spring keeps its own internal reference in a way that does NOT
+        //    auto-rescale/auto-follow a jump like this (confirmed on video: resizing a character
+        //    left its tail stranded at the old scale/position while the body jumped to the new
+        //    one — "파츠 뜯어짐, 스튜디오에서 캐릭터를 옮긴 뒤"). This needs the full mute +
+        //    manual rigid-FK-recompute treatment below.
+        //
+        //  - REACTION pin (c.__reactionPinnedUntil, set by pinReactionPhysics on every tap/pet/
+        //    pull-cheek and ordinary motion swap): only a 0.25s animation CROSSFADE, no jump in
+        //    skeleton position/scale at all. Muting here was the actual bug reported on video —
+        //    since this build's jiggle bones (ears, braid, back hair, tail) are repositioned
+        //    ONLY by their own PhysicsConstraint.update(), muting that update during a reaction
+        //    unplugs the bone from the skeleton instead of calming it, leaving it frozen in
+        //    midair while the body kept animating. Reaction pins only ever need
+        //    spine.Physics.reset (zero-velocity resync each pinned frame, still calling the real
+        //    update()) to stop crossfade fling — nothing more.
+        const isTeleportPinned = !!(c.__justRepositioned || c.__slotDragActive);
+        const isReactionPinned = !!(c.__reactionPinnedUntil && now < c.__reactionPinnedUntil);
+        const isDragPinned = isTeleportPinned || isReactionPinned;
+        // On precisely the one transition frame where TELEPORT pinning just turned off, run ONE
+        // spine.Physics.reset pass with the constraint unmuted so the real, now-active constraint
+        // resyncs its internal position/velocity to the character's actual current pose with zero
+        // implied velocity — see the original "드래그 직후에만 뒷머리가 찢어짐" comment history.
+        // Reaction-pin endings don't need this: nothing was ever muted for them, so there's no
+        // stale internal state to resync.
+        const justUnpinned = !!c.__wasTeleportPinned && !isTeleportPinned;
+        c.__wasTeleportPinned = isTeleportPinned;
+        // Mute only for a genuine teleport, and only for that/those frame(s). Reaction pins leave
+        // this false, so update() keeps running and jiggle bones keep tracking their parent
+        // through the crossfade (fixing the floating-ear/braid bug from the last report).
+        setPhysicsConstraintsMuted(c.skeleton, isTeleportPinned);
+        // Local-pose snapshot: only needed while muted (teleport case), to undo whatever
+        // corruption the mute causes to each physics-constraint bone's local pose before the
+        // manual rigid-FK recompute below rebuilds its world transform from that local pose.
+        const __pcPoseSnapshot = isTeleportPinned
+          ? getBonesNeedingRigidRecompute(c.skeleton).map(b => ({ bone: b, pose: snapshotBonePose(b) }))
+          : null;
         c.skeleton.updateWorldTransform((isDragPinned || justUnpinned) ? spine.Physics.reset : spine.Physics.update);
         c.__justRepositioned = false;
         if (__pcPoseSnapshot){
-          // Force each physics bone's local pose back to the pre-updateWorldTransform snapshot.
-          // Confirmed via [debug][mute-verify]: even with mix=0 and update() replaced by a no-op,
-          // the watched bone (backhairSR5) kept drifting further from the body every frame while
-          // pinned — which is only possible if something still writes into bone.pose during this
-          // call despite the "mute" above. recomputeBoneWorldRigid() further down can't fix that on
-          // its own: it faithfully rebuilds world transform FROM whatever local pose is current, so
-          // a still-corrupted local pose just produces a bone rigidly glued to the wrong spot.
-          // Restoring the clean snapshot here gives that recompute good data to work from.
           __pcPoseSnapshot.forEach(({bone, pose}) => restoreBonePose(bone, pose));
         }
-        // THE ACTUAL FIX for "뒷머리 뜯어짐" (hair tearing away during a body-drag): the
-        // [debug][mute-verify] log proved the constraint-muting above wasn't the answer — even with
-        // the constraint's update() fully replaced by a no-op AND mix forced to 0, the watched hair
-        // bone (backhairSR5) still drifted 183px away from the body by frame 15. A bone that's
-        // truly just "not being pushed by physics" should stay perfectly rigid relative to its
-        // parent as the parent moves (plain FK does that automatically) — drifting further away
-        // every frame instead means that bone's updateWorldTransform() wasn't running AT ALL once
-        // its constraint was silenced. On this build, jiggle bones apparently have no independent
-        // "plain bone" entry in skeleton.updateCache — the physics constraint's own update() call
-        // is the ONLY thing that ever repositions them, jiggle or not. So muting it doesn't stop
-        // the sway, it stops the bone from tracking the body altogether, and it's left further and
-        // further behind as the drag continues — exactly the tearing seen on video.
-        // Fix: manually call each affected bone's own updateWorldTransform() (a plain Bone method,
-        // nothing to do with the constraint) right after the pass above. The parent bones earlier
-        // in hierarchy order have already been updated to their new dragged position by the normal
-        // skeleton pass, so this simply recomputes worldX/Y/rotation from the bone's current local
-        // pose against that fresh parent transform — rigidly following the body, no jiggle, no lag.
-        // Rigid recompute disabled for the same reason: it was the workaround for bones that the
-        // mute had unplugged. guardConstraintBlowups() below is the remaining safety net, and it
-        // catches a stranded bone from any cause, not just this one.
-        if (false){
-          // Was: getPhysicsConstraintBones(...).forEach(b => b.updateWorldTransform()) — that
-          // called the runtime's own Bone method directly, which threw "Cannot read properties of
-          // undefined (reading '_update')" (BonePose.ts:139) on every single frame of a body-drag
-          // on this build, crashing renderLoop before the actual "뒷머리 뜯어짐" fix below it ever
-          // ran. recomputeBoneWorldRigid (added above) does the same "rigidly follow the parent, no
-          // jiggle" job by hand instead of through that broken runtime method. Sorted by hierarchy
-          // depth (shallowest/parent-most first) so a chained jiggle bone (e.g. backhairL2 -> L3 ->
-          // L4) always sees its own parent's *freshly recomputed* world matrix rather than a stale
-          // one from before this pass started.
+        // Manual rigid-FK recompute: restored for the teleport case only (drag/resize), which is
+        // exactly the scenario it was written for. Glues every physics-constraint bone (and every
+        // descendant of one) to wherever plain FK says it should be relative to its now-jumped
+        // parent — no jiggle, no lag, no stranding — for as long as the teleport pin lasts.
+        // Reaction pins never reach here (isTeleportPinned is false), so ordinary jiggle isn't
+        // flattened by a tap or a pet.
+        if (isTeleportPinned){
           getBonesNeedingRigidRecompute(c.skeleton)
             .slice()
             .sort((a, b) => boneDepth(a) - boneDepth(b))
             .forEach(b => recomputeBoneWorldRigid(b));
         }
-        // Verification: confirm the mute call above is actually (a) running, (b) matching
-        // constraints, and (c) having any effect on the bone that was drifting worst before —
-        // rather than assuming the previous fix worked. Logs once right when a drag starts, then
-        // every ~15 frames while it continues.
-        // Verification logging disabled: its "drift" figure is the distance from a reference offset
-        // captured on the first pinned frame, which only means anything while the body is standing
-        // still (a real drag). During ordinary animation the body moves, so the number grows purely
-        // because the character is animating, and it flooded the console during normal playback.
         if (false && isDragPinned){
           c.__verifyFrame = (c.__verifyFrame || 0) + 1;
           if (c.__verifyFrame === 1 || c.__verifyFrame % 15 === 0){
