@@ -4250,18 +4250,20 @@
             // c.bounds every frame as offsetXNorm/offsetYNorm change.
             ew: c.bounds.w, eh: c.bounds.h
           };
-          // Pin physics/jiggle bones (back hair, ears, tail, ...) to follow the body rigidly for
-          // the whole duration of a manual body drag — see the c.__slotDragActive check in
-          // renderLoop for why. The previous "only reset on a big jump" heuristic (jumpThreshold
-          // in layoutStudioSlots) still let ordinary, smooth per-frame drag deltas fall through to
-          // Physics.update. Spine's physics constraints compute their sway from how fast their
-          // bone moved *in world units per second*; a hand-dragged whole-body move covers far more
-          // distance per frame than anything the rig's own animations ever do, so even a smooth
-          // drag reads as an enormous velocity to the spring and throws the hair out to the side,
-          // never catching back up until the drag stops — exactly the "이탈"(detached) hair seen on
-          // video. Freezing physics for the drag's full duration (not just the first jump frame)
-          // avoids feeding it that fake velocity at all.
-          c.__slotDragActive = true;
+          // FIX (hair judder on repeated clicking, "click-triggered shrink" report): c.__slotDragActive
+          // used to be set true right here, on mousedown itself — before the pointer has moved at
+          // all. That means a plain click (press+release with no drag, or a fast repeated-click
+          // stress test) was running the FULL teleport-pin cycle every single time: mute physics,
+          // rigid-recompute, then on release a spine.Physics.reset resync — a full freeze-then-
+          // zero-velocity-resync of every jiggle bone (hair/ears/tail) even though the body never
+          // actually moved. Doing that many times a second (fast repeated clicks) is exactly what
+          // reads as the hair "드득거리는"/juddering — each click yanks it out of its natural sway
+          // and re-syncs it from scratch, whether or not the click was ever going to become a drag.
+          // The pin's whole justification (see the long comment below) is a *discontinuous jump* in
+          // skeleton position — which can only happen once the pointer has actually moved, never on
+          // press alone — so it's moved out of here and into the pointermove handler below, set only
+          // on the first pointermove that arrives for this slotDrag. A tap/click that never moves
+          // now never touches physics at all.
           // TEMP DIAGNOSTIC (click-triggered shrink report) — logs the moment a body-grab starts,
           // i.e. on mousedown itself, before any pointermove. bounds here are c.bounds *before*
           // this frame's render/pin logic touches anything, for comparison against the
@@ -4359,6 +4361,15 @@
       const slot = studioSlots.find(s=>s.id === slotDrag.slotId);
       const c = slot && slot.char;
       if (c && renderer){
+        // Pin physics/jiggle bones (back hair, ears, tail, ...) to follow the body rigidly for
+        // the rest of this drag — see the long comment on the old pointerdown call site (moved
+        // here) for why a whole-body drag needs this at all: a hand-dragged move covers far more
+        // distance per frame than any animation the rig's own author made, which reads to a
+        // physics spring as an impossible velocity and flings the hair out to the side. This is
+        // now set on the FIRST real movement of the drag, not on the initial press — see that
+        // same comment for why doing it on press alone was itself a bug (hair juddering under
+        // repeated clicks).
+        c.__slotDragActive = true;
         // Same screen-delta-to-world-delta conversion as the bone drag below, but applied
         // straight to the slot's normalized offset instead of a bone-local offset — the skeleton
         // root has no parent rotation to account for, so no matrix inversion is needed here.
