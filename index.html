@@ -2523,6 +2523,21 @@
     const before = screenToWorld(clientX, clientY);
     const newZoom = clampZoom((studioCamera.zoom || 1) * factor);
     if (newZoom !== studioCamera.zoom){
+      // TEMP DIAGNOSTIC (remove once the "드래그하면 쪼그라들면서 락걸림" report is confirmed
+      // fixed): this is the only place studioCamera.zoom is ever changed outside an explicit
+      // reset (초기화 sets it straight to 1), so whenever it shrinks, logging who called us and
+      // what drag/gesture state was active at that moment pins down the exact trigger instead of
+      // guessing from video. Safe to leave in briefly — it only fires on an actual zoom change.
+      if (newZoom < studioCamera.zoom){
+        console.warn('[debug][studio-zoom-shrink]', {
+          from: studioCamera.zoom, to: newZoom, factor,
+          dragging: !!dragging, gesture: !!gesture, panDrag: !!panDrag,
+          slotDrag: !!slotDrag, bgDrag: !!bgDrag, pinch: !!pinch,
+          activePointerCount: activePointers.size,
+          activePointerTypes: Array.from(activePointers.keys())
+        });
+        console.trace('[debug][studio-zoom-shrink] call stack');
+      }
       studioCamera.zoom = newZoom;
       applyStudioCameraTransform();
       const after = screenToWorld(clientX, clientY);
@@ -4097,7 +4112,16 @@
   // in flight closes the gap the same way the pinch path already does.
   canvas.addEventListener('wheel', (e)=>{
     if (!renderer) return;
-    if (dragging || gesture || panDrag || slotDrag || bgDrag || pinch) return;
+    // TEMP DIAGNOSTIC (see the matching one in studioZoomAt) — confirms whether wheel events are
+    // even arriving during a drag, and whether the guard below is actually suppressing them.
+    if (dragging || gesture || panDrag || slotDrag || bgDrag || pinch){
+      console.warn('[debug][wheel-during-drag] suppressed', {
+        deltaY: e.deltaY, ctrlKey: e.ctrlKey, deltaMode: e.deltaMode,
+        dragging: !!dragging, gesture: !!gesture, panDrag: !!panDrag,
+        slotDrag: !!slotDrag, bgDrag: !!bgDrag, pinch: !!pinch
+      });
+      return;
+    }
     if (mode === 'studio'){
       if (!studioCamera.baseCamera) return;
       e.preventDefault();
@@ -4121,6 +4145,16 @@
 
     activePointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
     if (activePointers.size >= 2){
+      // TEMP DIAGNOSTIC (see studioZoomAt) — a real 2-finger touch pinch is the other possible
+      // cause of an accidental mid-drag zoom-out, alongside the wheel path. Logging pointerType
+      // here shows whether this really is a second touch/pen contact landing (expected on a
+      // touchscreen) or something spuriously pushing activePointers to size 2 during an ordinary
+      // single-mouse drag (which would be a different bug in the pointer bookkeeping itself).
+      console.warn('[debug][pinch-start] second pointer landed, canceling single-pointer drag', {
+        newPointerId: e.pointerId, newPointerType: e.pointerType,
+        allPointerIds: Array.from(activePointers.keys()),
+        wasSlotDragging: !!slotDrag, wasDragging: !!dragging, wasGesture: !!gesture, wasPanDrag: !!panDrag, wasBgDrag: !!bgDrag
+      });
       // A second finger just landed — this becomes a pinch-zoom gesture instead of a tap/drag.
       // Cancel whatever single-finger interaction the first finger had already started so it
       // doesn't also fire once fingers lift.
