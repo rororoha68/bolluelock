@@ -785,6 +785,10 @@
   // Single shared camera for the whole stage (as opposed to the per-character zoom/pan/baseCamera
   // used in the single-character viewer) — this is what "무대 전체를 하나로 줌/팬" means.
   let studioCamera = {baseCamera:null, zoom:1, panX:0, panY:0};
+  // The stage size (CSS px) that studioCamera.baseCamera was last computed for. Used by
+  // adaptStudioCameraToViewport() to convert a resize into a pure "show more / show less of the
+  // same world" adjustment instead of a full re-fit — see that function for why that matters.
+  let studioViewportPx = null;
   // A user-picked background image for the stage (data URL, kept in memory only — never uploaded
   // anywhere). Applied as a CSS background on studioBgLayer only while mode==='studio'; the
   // single-character viewer never shows it.
@@ -1753,12 +1757,26 @@
     if (!viewerView.classList.contains('show')) return;
     const dpr = window.devicePixelRatio || 1;
     const w = stageWrap.clientWidth, h = stageWrap.clientHeight;
-    canvas.width = Math.max(1, Math.round(w*dpr));
-    canvas.height = Math.max(1, Math.round(h*dpr));
-    canvas.style.width = w+'px';
-    canvas.style.height = h+'px';
-    if (gl) gl.viewport(0,0,canvas.width, canvas.height);
-    if (mode === 'studio') fitStudioCamera(); else fitCameraToActive();
+    const pxW = Math.max(1, Math.round(w*dpr));
+    const pxH = Math.max(1, Math.round(h*dpr));
+    // Mobile browsers fire `resize` for things that don't actually change the stage at all — the
+    // URL bar sliding away on scroll being the big one. Writing canvas.width/height is never free
+    // (it reallocates and clears the WebGL drawing buffer even when the value is identical), so
+    // skip that work entirely unless the stage really did change size.
+    if (canvas.width !== pxW || canvas.height !== pxH){
+      canvas.width = pxW;
+      canvas.height = pxH;
+      canvas.style.width = w+'px';
+      canvas.style.height = h+'px';
+      if (gl) gl.viewport(0,0,canvas.width, canvas.height);
+    }
+    if (mode === 'studio'){
+      // Keep the arrangement the person made; only re-derive the framing from scratch when there
+      // isn't one yet to preserve. See adaptStudioCameraToViewport().
+      if (!adaptStudioCameraToViewport()) fitStudioCamera();
+    } else {
+      fitCameraToActive();
+    }
   }
 
   function waitForAssets(am){
@@ -2489,6 +2507,7 @@
       let vw = 600, vh = 600;
       if (vw/vh < aspect) vw = vh*aspect; else vh = vw/aspect;
       studioCamera.baseCamera = {cx:0, cy:0, vw, vh};
+      studioViewportPx = measureStageViewportPx();
       applyStudioCameraTransform();
       return;
     }
@@ -2503,7 +2522,54 @@
     let vw = (maxX-minX)*pad, vh = (maxY-minY)*pad;
     if (vw/vh < aspect) vw = vh*aspect; else vh = vw/aspect;
     studioCamera.baseCamera = {cx, cy, vw, vh};
+    studioViewportPx = measureStageViewportPx();
     applyStudioCameraTransform();
+  }
+
+  // Current stage size in CSS px, or null while the box hasn't been laid out yet (mid-reflow it
+  // can legitimately measure 0 — see the --stage-ratio comment in the background upload handler).
+  // Returning null rather than 0 keeps adaptStudioCameraToViewport() from dividing by a bogus
+  // measurement and blowing the framing up.
+  function measureStageViewportPx(){
+    const w = stageWrap.clientWidth, h = stageWrap.clientHeight;
+    return (w > 0 && h > 0) ? {w, h} : null;
+  }
+
+  // Re-shapes the stage camera for a NEW canvas size without re-framing the scene.
+  //
+  // fitStudioCamera() frames the union of every placed character's bounds, which is the right
+  // thing exactly once (the first character placed, or an explicit reset) and the wrong thing on
+  // a resize: it re-centers the group, re-zooms to whatever box they happen to occupy now, and so
+  // throws away the composition the person arranged by hand — characters that were deliberately
+  // far apart get pulled back into an evenly-framed, "tidied up" group, and their on-screen
+  // spacing changes because the world-units-per-pixel scale changed underneath them. Desktop
+  // barely shows this because window resizes are rare there. On a phone they are constant: the
+  // URL bar collapsing on scroll fires resize, and .stage-wrap's aspect-ratio (plus --stage-ratio
+  // when a background is set) means real size changes too — so the stage kept snapping back.
+  //
+  // Instead, keep the world-units-per-CSS-pixel scale and the camera center exactly as they are,
+  // and only grow/shrink the visible viewport to match the canvas's new shape. Characters keep
+  // their on-screen size, their spacing, and their position relative to the (CSS-scaled, also
+  // center-anchored) background layer; a taller stage simply reveals more of the world.
+  // Returns false when there's nothing to adapt from, so the caller can fall back to a real fit.
+  function adaptStudioCameraToViewport(){
+    const base = studioCamera.baseCamera;
+    const prev = studioViewportPx;
+    const next = measureStageViewportPx();
+    if (!base || !prev) return false; // nothing framed yet — caller should do a real fit
+    // Mid-reflow the stage can measure 0 (see measureStageViewportPx). Keep the existing framing
+    // and wait for the next resize rather than re-fitting against a measurement we don't trust.
+    if (!renderer || !next) return true;
+    if (next.w === prev.w && next.h === prev.h){ applyStudioCameraTransform(); return true; }
+    // vw/vh are always kept in step with the canvas aspect, so these two agree; Math.max just
+    // guards against a stale baseCamera left over from an odd intermediate layout.
+    const unitsPerPx = Math.max(base.vw / prev.w, base.vh / prev.h);
+    if (!Number.isFinite(unitsPerPx) || unitsPerPx <= 0) return false;
+    base.vw = next.w * unitsPerPx;
+    base.vh = next.h * unitsPerPx;
+    studioViewportPx = next;
+    applyStudioCameraTransform();
+    return true;
   }
 
   function applyStudioCameraTransform(){
