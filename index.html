@@ -3291,6 +3291,95 @@
     });
   }
 
+  // ---------------------------------------------------------------------------------------
+  // NOTE FOR THE NEXT AI TOUCHING THIS FILE (2026-09, "드래그하면 분리됨 — 트랜스폼제약 켜진
+  // 모션에서만" report #2):
+  //
+  // muteHeadFollowConstraints() above (zeroing every mix* field) was believed to fully neutralize
+  // these 8 atama/cheek-to-* constraints — that was the fix for report #1 (see the long comment on
+  // HEAD_FOLLOW_CONSTRAINT_NAMES above: "2026-09 RESTORED after a regression"). Video evidence from
+  // report #2 shows that belief was WRONG, or at least incomplete: with the mute back in place and
+  // active, dragging a character in the studio while pull_idle plays still shows head/face/hair
+  // (this constraint's target bones) inflate to several times their normal size, progressively
+  // worse frame over frame, while the body stays normal size and simply moves with the drag.
+  //
+  // Exact same shape of problem already solved once for PhysicsConstraint (jiggle) bones — see the
+  // __pcPoseSnapshot comment below ("Local-pose snapshot: only needed while muted... to undo
+  // whatever corruption the mute causes... since muting alone wasn't enough"). The fix there was:
+  // mute is necessary but not sufficient, so ALSO snapshot each affected bone's LOCAL pose right
+  // before updateWorldTransform() and restore it right after, so whatever the constraint wrote into
+  // local pose during that one updateWorldTransform() call — mix field or no — never survives past
+  // the frame that produced it.
+  //
+  // This section applies the identical treatment to the transform-constraint side, which never had
+  // it: getBonesNeedingHeadFollowFreeze() below returns this constraint's actual target bones
+  // (head/face/backhead/hear — resolved from the constraint's own .bones/.bone, same
+  // resolveOwningBone() used for physics constraints, since these are BonePose references too) PLUS
+  // every one of their descendants (so head inflating doesn't drag fronthair/eyes/decorations along
+  // with it). The render loop snapshots their local pose right after muteHeadFollowConstraints(),
+  // then after updateWorldTransform() restores that local pose and re-derives each bone's WORLD
+  // transform from it via computeBoneWorldRigid() (plain FK, parents-first) — see the call sites in
+  // both render-loop branches below (search "__hfPoseSnapshot").
+  //
+  // Applied UNCONDITIONALLY every frame (not just during isTeleportPinned/drag), because the report
+  // is that this reproduces on any motion that keyframes these constraints hard, drag or no drag —
+  // it's just easiest to see while dragging because that's when someone is actually watching a
+  // pinned character play pull_idle/pet_idle for several seconds in a row.
+  //
+  // IMPORTANT if this still doesn't fully fix it: that would mean the corruption isn't confined to
+  // these bones' own local pose either (e.g. it leaks into a sibling/other bone, or into something
+  // this snapshot doesn't cover). Don't reach for guardConstraintBlowups() as a fallback — it was
+  // already tried and explicitly DISABLED (see the big 2026-09 comment further down, near
+  // "guardConstraintBlowups(c)") because its bone-set assumption was wrong for this rig and it
+  // caused worse corruption (character collapsing into a ball) than the bug it guarded against. If
+  // you do build a similar guard again, base its bone set on getBonesNeedingHeadFollowFreeze() below
+  // (the constraint's own real target bones), not on a parent-chain guess.
+  // ---------------------------------------------------------------------------------------
+  function getHeadFollowConstraints(skeleton){
+    const all = [].concat(
+      Array.isArray(skeleton.constraints) ? skeleton.constraints : [],
+      Array.isArray(skeleton.transformConstraints) ? skeleton.transformConstraints : []
+    );
+    return all.filter(c => c && c.data && HEAD_FOLLOW_CONSTRAINT_NAMES.includes(c.data.name));
+  }
+
+  // The actual Bone objects these 8 constraints target (head/face/backhead/hear, per rig). Same
+  // BonePose-vs-Bone resolution as getPhysicsConstraintBones() below, because tc.bones entries are
+  // BonePose wrappers on this build too — pushing them in raw would silently fail every
+  // parent-chain walk downstream (that exact bug is documented on resolveOwningBone() below).
+  function getHeadFollowTargetBones(skeleton){
+    const bones = [];
+    getHeadFollowConstraints(skeleton).forEach(tc => {
+      const list = [].concat(Array.isArray(tc.bones) ? tc.bones : [], tc.bone ? [tc.bone] : []);
+      list.forEach(entry => {
+        const b = resolveOwningBone(skeleton, entry);
+        if (b) bones.push(b);
+      });
+    });
+    return bones.filter((b, i, arr) => b && arr.indexOf(b) === i);
+  }
+
+  // Target bones + every descendant, parents-first — same "don't just fix the seed bone, fix
+  // everything hanging off it too" reasoning as getBonesNeedingRigidRecompute() below (that
+  // function's own comment documents backhairSR5 being left stranded for exactly this reason).
+  // Cached per skeleton since the bone hierarchy and constraint list never change after load.
+  function getBonesNeedingHeadFollowFreeze(skeleton){
+    if (skeleton.__headFollowFreezeBones) return skeleton.__headFollowFreezeBones;
+    const seeds = new Set(getHeadFollowTargetBones(skeleton));
+    const result = new Set(seeds);
+    (skeleton.bones || []).forEach(b => {
+      if (result.has(b)) return;
+      let p = b.parent;
+      while (p){
+        if (seeds.has(p)){ result.add(b); break; }
+        p = p.parent;
+      }
+    });
+    const sorted = Array.from(result).sort((a, b) => boneDepth(a) - boneDepth(b));
+    skeleton.__headFollowFreezeBones = sorted;
+    return sorted;
+  }
+
   // Finds every PhysicsConstraint (jiggle-bone spring) on a skeleton, regardless of which array
   // shape this runtime build exposes them under (some builds group constraints by type under
   // skeleton.physicsConstraints, others only expose a single mixed skeleton.constraints list —
@@ -4766,6 +4855,16 @@
         // after apply() (which is what would have re-enabled it) and before
         // updateWorldTransform() below (which is what actually runs the buggy constraint math).
         muteHeadFollowConstraints(c.skeleton);
+        // See the big "NOTE FOR THE NEXT AI" comment on getBonesNeedingHeadFollowFreeze() above:
+        // muting mix alone (just above) was proven insufficient by video (report #2) — head/face/
+        // hair still inflate on pull_idle/pet_idle. Snapshot these bones' LOCAL pose now (post-mute,
+        // pre-updateWorldTransform), then after updateWorldTransform() runs (and may have corrupted
+        // it again regardless of mix) restore that pose and rebuild WORLD transform from it via
+        // plain FK — see the matching restore+recompute call right after updateWorldTransform()
+        // below. Unconditional every frame, not gated on isTeleportPinned, because this constraint's
+        // instability is driven by the animation clip's own mix keyframes, not by dragging.
+        const __hfPoseSnapshot = getBonesNeedingHeadFollowFreeze(c.skeleton)
+          .map(b => ({ bone: b, pose: snapshotBonePose(b) }));
         applyProceduralEffects(c, dt);
         // Physics.reset (instead of the usual Physics.update) on the exact frame a body-drag just
         // teleported this character — see the c.__justRepositioned comment in the slotDrag
@@ -4831,6 +4930,15 @@
         if (__pcPoseSnapshot){
           __pcPoseSnapshot.forEach(({bone, pose}) => restoreBonePose(bone, pose));
         }
+        // Head-follow (atama/cheek-to-head/face/backhead/hear) freeze: restore the local pose
+        // snapshotted before updateWorldTransform() above, then rebuild these bones' WORLD
+        // transform from that clean local pose (plain FK, parents-first — computeBoneWorldRigid
+        // already reads bonePose()/boneWorldMatrix() the same way getAllBonesSortedByDepth's
+        // teleport-pin recompute does below). Unconditional, every frame — see the "NOTE FOR THE
+        // NEXT AI" comment on getBonesNeedingHeadFollowFreeze() for why this can't be limited to
+        // isTeleportPinned frames the way the physics-bone recompute below is.
+        __hfPoseSnapshot.forEach(({bone, pose}) => restoreBonePose(bone, pose));
+        getBonesNeedingHeadFollowFreeze(c.skeleton).forEach(b => recomputeBoneWorldRigid(b));
         // Manual rigid-FK recompute: restored for the teleport case only (drag/resize), which is
         // exactly the scenario it was written for. Sweeps every bone in the skeleton (see
         // getAllBonesSortedByDepth above for why: enumerating "just the physics-constraint bones"
@@ -5046,8 +5154,16 @@
     // Same re-mute as the studio render loop — see muteHeadFollowConstraints for why this has to
     // run every frame, after apply() and before updateWorldTransform().
     muteHeadFollowConstraints(c.skeleton);
+    // Same head-follow local-pose freeze as the studio loop above — see the "NOTE FOR THE NEXT AI"
+    // comment on getBonesNeedingHeadFollowFreeze() for the full writeup. Needed here too: the
+    // single-viewer path plays the exact same pull_idle/pet_idle clips, so it's just as exposed to
+    // this constraint's mix-keyframe-driven instability even with no drag/studio involved at all.
+    const __hfPoseSnapshot = getBonesNeedingHeadFollowFreeze(c.skeleton)
+      .map(b => ({ bone: b, pose: snapshotBonePose(b) }));
     applyProceduralEffects(c, dt);
     c.skeleton.updateWorldTransform(spine.Physics.update);
+    __hfPoseSnapshot.forEach(({bone, pose}) => restoreBonePose(bone, pose));
+    getBonesNeedingHeadFollowFreeze(c.skeleton).forEach(b => recomputeBoneWorldRigid(b));
     // guardConstraintBlowups(c) call removed — see the matching comment in the studio render
     // loop above for why: it was guarding the wrong bone set (atama/cheek's parent-chain
     // descendants, not the bones the inert transform constraint was ever meant to affect) and
