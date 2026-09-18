@@ -2643,18 +2643,26 @@
 
   // Finds which studio character (if any) owns an interactive bone under this pointer, checking
   // each placed character in turn since they sit side by side rather than overlapping.
-  // Tap-only in the studio: testing confirmed a plain short tap on a 'pat' bone (releases before
-  // DRAG_THRESHOLD_PX -> playReaction('hit')) is fine on its own, but the physics runaway
-  // (tail/hair flinging out) that kept reproducing came from the *held/dragged* interactions —
-  // cheek "pull" (a 'pull'-type bone, always a drag) and the pet hold-drag that a 'pat' bone
-  // escalates into once the pointer moves past that threshold (see the studio-only guard on that
-  // escalation in pointermove). So only 'pat' bones are hit-testable here at all, and the escalation
-  // itself is blocked, leaving nothing but the tap path reachable in the studio.
+  // RE-ENABLED (studio interactions request): this used to hit-test 'pat' bones only, with cheek
+  // "pull" and the pat->pet hold-drag escalation both blocked, because a held/dragged interaction
+  // was once seen causing the same physics runaway (hair/tail flinging out) as an undetected
+  // whole-body teleport. Since that restriction was added, the actual causes of that class of bug
+  // have been found and fixed at the source instead: muteHeadFollowConstraints() +
+  // getBonesNeedingHeadFollowFreeze() keep the head/face/backhead/hear follow constraints stable
+  // every frame regardless of what's being dragged, pinReactionPhysics() (already called from
+  // startHoldReaction/stopHoldReaction — see there) pins physics for the whole length of any
+  // reaction-triggered animation crossfade a pet/pull can trigger, and the studio render loop has
+  // its own runaway-bone safety net (liveMax > expectedMax*2.2 -> forced Physics.reset) as a
+  // backstop that the single-character viewer doesn't even have — and pull/pet drags have always
+  // worked fine there. A bone-local pull/pet drag also never teleports the skeleton the way a
+  // whole-body slotDrag does (it's a small spring-damped offset, clamped in the pointermove
+  // handler below), so it was never actually exposed to the teleport-velocity failure mode that
+  // motivated this restriction in the first place. So both bone types are hit-testable here now.
   function findStudioHit(clientX, clientY){
     const chars = studioSlots.map(s=>s.char).filter(Boolean);
     for (const c of chars){
       const hit = findHitBone(c, clientX, clientY);
-      if (hit && hit.type === 'pat') return {c, hit};
+      if (hit) return {c, hit};
     }
     return null;
   }
@@ -4478,9 +4486,9 @@
     }
     if (gesture && gesture.pointerId === e.pointerId && !gesture.resolved){
       const dist = Math.hypot(e.clientX - gesture.startX, e.clientY - gesture.startY);
-      // Studio: never escalate into the pet hold-drag below — only the tap resolved on release
-      // (in endDrag) is enabled there. See the comment on findStudioHit for why.
-      if (dist > DRAG_THRESHOLD_PX && mode !== 'studio'){
+      // Studio escalation to the pet hold-drag re-enabled along with cheek "pull" — see the
+      // findStudioHit comment for why this is safe now (it wasn't when this guard was added).
+      if (dist > DRAG_THRESHOLD_PX){
         // Moved past the tap threshold before release — this is a pet/stroke drag rather than a
         // tap, so it no longer falls through to the tap ("hit") reaction on release. Start the
         // dedicated pet hold (loops pet_idle for as long as the pointer stays down); marking
