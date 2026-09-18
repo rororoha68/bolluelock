@@ -3786,6 +3786,25 @@
   // overwrite it.
   function computeBoneWorldRigid(bone){
     if (!bone || !bone.parent) return null;
+    // FIX (click-triggered cheek shrink): this function always did full "Normal" parent
+    // rotation+scale inheritance, which is wrong for any bone authored with restricted
+    // inheritance (Only Translation / No Scale / No Rotation-or-Reflection / etc). This rig
+    // deliberately turns scale inheritance off on bones like 'cheek' so they stay round instead
+    // of squashing when their parent (head) scales — see the long comment on
+    // getHeadFollowSourceBones() above ("볼(cheek)이 찌그러짐" report) where this exact defect was
+    // first diagnosed and fixed, but only for the narrower head-follow-freeze sweep. The broader
+    // ALL-bones sweep run during a studio click/drag (getAllBonesSortedByDepth →
+    // recomputeBoneWorldRigid, gated by isTeleportPinned in renderLoop) calls this same function
+    // and was never covered by that earlier fix — which is exactly what was still shrinking the
+    // cheek on every click ([debug][click-pin-bounds] showing shrankW/H below 1 on click). The
+    // real spine.Bone.updateWorldTransform() that already ran this frame (inside
+    // skeleton.updateWorldTransform(), just above in renderLoop) already positions a
+    // restricted-inherit bone correctly, so for those bones the right fix is simply to leave that
+    // already-correct world transform alone instead of overwriting it with this function's naive
+    // full-inheritance math.
+    const inheritMode = bone.data && bone.data.inherit;
+    const NORMAL_INHERIT = (typeof spine !== 'undefined' && spine.Inherit) ? spine.Inherit.Normal : 0;
+    if (inheritMode !== undefined && inheritMode !== null && inheritMode !== NORMAL_INHERIT) return null;
     const pose = bonePose(bone);
     const parentMatrix = boneWorldMatrix(bone.parent);
     const parentPos = boneWorldPos(bone.parent);
