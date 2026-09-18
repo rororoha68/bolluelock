@@ -4243,6 +4243,16 @@
           // video. Freezing physics for the drag's full duration (not just the first jump frame)
           // avoids feeding it that fake velocity at all.
           c.__slotDragActive = true;
+          // TEMP DIAGNOSTIC (click-triggered shrink report) — logs the moment a body-grab starts,
+          // i.e. on mousedown itself, before any pointermove. bounds here are c.bounds *before*
+          // this frame's render/pin logic touches anything, for comparison against the
+          // [debug][click-pin-bounds] log that fires from the very next render frame.
+          console.warn('[debug][slotdrag-start]', {
+            slotId: slot.id, charId: c.id,
+            clientX: e.clientX, clientY: e.clientY,
+            boundsAtPress: {w: c.bounds.w, h: c.bounds.h, x: c.bounds.x, y: c.bounds.y},
+            studioCameraZoom: studioCamera.zoom
+          });
         }
       }
       return;
@@ -5059,6 +5069,18 @@
         // Reaction-pin endings don't need this: nothing was ever muted for them, so there's no
         // stale internal state to resync.
         const justUnpinned = !!c.__wasTeleportPinned && !isTeleportPinned;
+        // TEMP DIAGNOSTIC (click-triggered shrink report): captured BEFORE c.__wasTeleportPinned
+        // is overwritten below, so this is true only on the exact frame a click/drag just started
+        // pinning this character (mousedown on the body, before any pointermove at all — matches
+        // the report that it happens on press, not drag). Bounds are measured right before the
+        // mute+rigid-recompute block runs and again right after (see the matching log further
+        // down), to see directly whether that block is what shrinks the on-screen size.
+        const __justPinnedDiag = isTeleportPinned && !c.__wasTeleportPinned;
+        let __diagBoundsBefore = null;
+        if (__justPinnedDiag){
+          c.skeleton.getBounds(__runawayBoundsOffset, __runawayBoundsSize, []);
+          __diagBoundsBefore = {w: __runawayBoundsSize.x, h: __runawayBoundsSize.y};
+        }
         c.__wasTeleportPinned = isTeleportPinned;
         // Mute only for a genuine teleport, and only for that/those frame(s). Reaction pins leave
         // this false, so update() keeps running and jiggle bones keep tracking their parent
@@ -5094,6 +5116,24 @@
         // isn't flattened by a tap or a pet.
         if (isTeleportPinned){
           getAllBonesSortedByDepth(c.skeleton).forEach(b => recomputeBoneWorldRigid(b));
+        }
+        // TEMP DIAGNOSTIC continued: log the before/after bounds comparison for the pin-start
+        // frame captured above, plus the shared studioCamera.zoom (ruled out separately, but
+        // logged again here for certainty) and the character's own expected size, so a single
+        // click-and-hold (no drag) will show in the console exactly what changed and by how much.
+        if (__justPinnedDiag && __diagBoundsBefore){
+          c.skeleton.getBounds(__runawayBoundsOffset, __runawayBoundsSize, []);
+          const after = {w: __runawayBoundsSize.x, h: __runawayBoundsSize.y};
+          console.warn('[debug][click-pin-bounds]', {
+            charId: c.id,
+            boundsBeforePin: __diagBoundsBefore,
+            boundsAfterPin: after,
+            shrankW: (after.w / __diagBoundsBefore.w).toFixed(3),
+            shrankH: (after.h / __diagBoundsBefore.h).toFixed(3),
+            studioCameraZoom: studioCamera.zoom,
+            studioExpectedW: c.__studioExpectedW, studioExpectedH: c.__studioExpectedH,
+            skeletonScaleX: c.skeleton.scaleX, skeletonScaleY: c.skeleton.scaleY
+          });
         }
         if (false && isDragPinned){
           c.__verifyFrame = (c.__verifyFrame || 0) + 1;
