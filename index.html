@@ -3236,20 +3236,20 @@
   // also showed zero visible follow effect for head/face even with the constraint live, muting
   // those costs nothing real and removes the blow-up.
   //
-  // 2026-09 backhead exception: full muting fixed head/face/hear (confirmed on screenshot — no
-  // more flying-apart parts) but left 'backhead' looking newly broken in a different way — a flat,
-  // square-edged slab of hair sticking out unrotated next to the braid, not tracking the head's
-  // tilt at all ("뒷머리만 해결해주면 될듯" report). Unlike head/face/hear, backhead's own rest
-  // local pose apparently isn't a sane standalone pose — it's authored assuming the constraint's
-  // contribution is always present, so mix:0 doesn't just "lose a subtle nudge", it exposes the
-  // raw, wrong-orientation rectangle. So 'atama-to-backhead' and 'cheek-to-backhead' are excluded
-  // from this list and stay live/unmuted, while the other 6 (to head/face/hear) stay muted. If this
-  // brings back a backhead-specific blow-up during hard pet_idle/pull_idle play, the fix is a
-  // targeted guardConstraintBlowups()-style clamp on just the backhead bone (compare live vs.
-  // computeBoneWorldRigid FK each frame, snap back only past a large-deviation threshold) rather
-  // than re-muting it outright — see guardConstraintBlowups below for that machinery, currently
-  // unused elsewhere.
-  const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','atama-to-face','atama-to-hear','cheek-to-head','cheek-to-face','cheek-to-hear'];
+  // 2026-09 backhead exception, tried then REVERTED: full muting fixed head/face/hear but left
+  // 'backhead' looking like a flat, square-edged slab that didn't track the head's tilt (the
+  // "뒷머리만 해결해주면 될듯" report) — so 'atama-to-backhead'/'cheek-to-backhead' were briefly
+  // excluded from this list to keep them live. That traded a cosmetic issue for a much worse one,
+  // confirmed on video: mid-drag (the exact isTeleportPinned window — see renderLoop), backhead
+  // would fly to a completely wrong position several character-widths away from the body, then
+  // snap back once the drag ended. So the live-constraint math for backhead is *not* just visually
+  // "stiff" when muted, it's actively unsafe under a body-position teleport when unmuted — same
+  // "unstable once mix > 0" instability as the original bug, just landing on 'backhead' this time.
+  // Back to all 8 muted: stable-but-slightly-stiff beats occasionally-flies-off-screen. If the
+  // static backhead look needs fixing later, do it as a per-frame clamp/guard on just that bone
+  // (compare live position to computeBoneWorldRigid FK, snap back only past a large-deviation
+  // threshold — see guardConstraintBlowups below) rather than unmuting the constraint outright.
+  const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','atama-to-face','atama-to-backhead','atama-to-hear','cheek-to-head','cheek-to-face','cheek-to-backhead','cheek-to-hear'];
   // Kept only for the load-time self-test's own before/after diagnostic (it needs to briefly turn
   // the native mix ON to prove the constraint *can* move bones at all) — never call this anywhere
   // else. Every real render path uses muteHeadFollowConstraints() below instead.
