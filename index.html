@@ -290,9 +290,12 @@
   #stage{ width:100%; height:100%; display:block; touch-action:none; position:relative; z-index:1; }
   /* Dedicated layer behind the canvas for the studio background image, kept separate from the
      stage-wrap element itself so the background can be scaled (zoom in/out) with a CSS transform
-     without that transform also affecting the canvas. background-size:auto deliberately shows the
-     image at its own native pixel size instead of cropping/stretching it to cover the stage —
-     the zoom slider (studioBgZoom) and the drag-to-pan behavior are how the user fits it instead. */
+     without that transform also affecting the canvas. The inset:0 here is only the idle state for
+     an empty stage: as soon as a background is picked, applyStudioBackground() replaces it with
+     an explicit centered box the size of the image itself, so the picture is never clipped to the
+     stage at paint time and zooming out can actually reveal the parts currently outside the frame
+     (see that function's comment). The zoom slider (studioBgZoom) and the drag-to-pan behavior are
+     how the user fits it. */
   .studio-bg-layer{
     position:absolute; inset:0; z-index:0;
     background-size:auto; background-position:center; background-repeat:no-repeat;
@@ -802,6 +805,10 @@
   // background must only move the background layer, never the stage camera or any placed
   // character.
   let studioBgPanX = 0, studioBgPanY = 0;
+  // The background image's own pixel dimensions, captured once when it's loaded. Needed because
+  // the background layer is sized to the image itself rather than to the stage — see
+  // applyStudioBackground() for why that's what makes zooming out reveal the whole picture.
+  let studioBgNaturalW = 0, studioBgNaturalH = 0;
 
   const HEAD_PATTERN = /atama/i;
   const CHEEK_PATTERN = /cheek|볼|뺨/i;
@@ -1668,7 +1675,36 @@
   // viewer uses — it must never carry the studio's background over when the person leaves the
   // studio.
   function applyStudioBackground(){
-    studioBgLayer.style.backgroundImage = (mode === 'studio' && studioBackgroundURL) ? `url(${studioBackgroundURL})` : '';
+    const active = !!(mode === 'studio' && studioBackgroundURL);
+    studioBgLayer.style.backgroundImage = active ? `url(${studioBackgroundURL})` : '';
+    // Size the layer to the IMAGE's own pixel dimensions and center it on the stage, rather than
+    // leaving it stretched across the stage (inset:0) with the picture painted inside it.
+    //
+    // A CSS background is painted into — and clipped by — its own box. With the layer pinned to
+    // the stage, any part of a photo bigger than the stage was thrown away at paint time, before
+    // transform:scale() ever ran. Scaling then just shrank that already-cropped rectangle, so
+    // zooming out pulled hard-cut edges inward instead of revealing more of the picture, and the
+    // rest of the image could never be recovered at any zoom level. Giving the layer the image's
+    // real size means the whole picture is always painted; only stage-wrap's overflow:hidden
+    // hides what's currently outside the frame, so zooming out genuinely brings it back into view.
+    // The image is never resampled by this — it's shown 1:1 at its natural size, and studioBgZoom
+    // remains the only thing that scales it.
+    if (active && studioBgNaturalW > 0 && studioBgNaturalH > 0){
+      studioBgLayer.style.left = '50%';
+      studioBgLayer.style.top = '50%';
+      studioBgLayer.style.right = 'auto';
+      studioBgLayer.style.bottom = 'auto';
+      studioBgLayer.style.width = studioBgNaturalW + 'px';
+      studioBgLayer.style.height = studioBgNaturalH + 'px';
+      // Centering via negative margins (not translate(-50%,-50%)) keeps the transform below free
+      // to stay exactly what it was: pan in plain screen px, then scale about the image's center.
+      studioBgLayer.style.marginLeft = (-studioBgNaturalW / 2) + 'px';
+      studioBgLayer.style.marginTop = (-studioBgNaturalH / 2) + 'px';
+      studioBgLayer.style.backgroundSize = '100% 100%';
+    } else {
+      ['left','top','right','bottom','width','height','marginLeft','marginTop','backgroundSize']
+        .forEach(prop=>{ studioBgLayer.style[prop] = ''; });
+    }
     // Pan first, then scale, so the drag offset is in plain screen pixels regardless of zoom.
     studioBgLayer.style.transform = `translate(${studioBgPanX}px, ${studioBgPanY}px) scale(${studioBgZoom})`;
   }
@@ -1681,6 +1717,9 @@
     reader.onload = ()=>{
       studioBackgroundURL = reader.result;
       studioBgPanX = 0; studioBgPanY = 0;
+      // Cleared until the probe below measures the new picture, so a stale size from the previous
+      // background is never used to lay out this one.
+      studioBgNaturalW = 0; studioBgNaturalH = 0;
       // Insert the image whole, never cropped: the stage takes on the photo's own aspect ratio
       // (below) and the zoom is set to "contain" that same ratio, so the full picture always fits
       // inside the visible stage instead of being cut off by overflow:hidden at native pixel size.
@@ -1688,6 +1727,9 @@
       // at its own size (zoom capped at 1) rather than being blown up and going blurry.
       const probe = new Image();
       probe.onload = ()=>{
+        studioBgNaturalW = probe.naturalWidth;
+        studioBgNaturalH = probe.naturalHeight;
+        applyStudioBackground();
         // Let the mobile stage-wrap take the shape of this actual photo (see --stage-ratio in the
         // CSS) instead of the generic 3:4 fallback, then resize/measure after that reflow so the
         // fit-zoom below (and the WebGL canvas) line up with the now-correctly-shaped container,
@@ -1715,6 +1757,7 @@
         });
       };
       probe.onerror = ()=>{
+        studioBgNaturalW = 0; studioBgNaturalH = 0;
         studioBgZoom = 1;
         studioBgZoomSlider.value = '1';
         applyStudioBackground();
@@ -1728,6 +1771,7 @@
 
   studioBgClearBtn.addEventListener('click', ()=>{
     studioBackgroundURL = null;
+    studioBgNaturalW = 0; studioBgNaturalH = 0;
     studioBgZoom = 1;
     studioBgZoomSlider.value = '1';
     studioBgPanX = 0; studioBgPanY = 0;
@@ -2820,6 +2864,7 @@
   function resetStudio(){
     studioSlots = [];
     studioBackgroundURL = null;
+    studioBgNaturalW = 0; studioBgNaturalH = 0;
     studioBgZoom = 1;
     studioBgZoomSlider.value = '1';
     studioBgPanX = 0; studioBgPanY = 0;
@@ -2883,10 +2928,11 @@
   // character — into a single PNG and triggers a download. Composited on an offscreen 2D canvas
   // rather than just grabbing the WebGL canvas, since the background image is a separate DOM
   // layer (see studioBgLayer) that the WebGL context never draws itself. The background math
-  // mirrors applyStudioBackground's CSS exactly: background-size:auto + background-position:center
-  // means the image sits at its native size centered on the stage, then translate(pan) scale(zoom)
-  // is applied around that center — reproduced here in the export canvas's pixel space (which is
-  // devicePixelRatio-scaled, same as the WebGL canvas) rather than CSS pixels.
+  // mirrors applyStudioBackground's CSS exactly: the layer is a box the size of the image itself,
+  // centered on the stage, with translate(pan) scale(zoom) applied around that center — reproduced
+  // here in the export canvas's pixel space (which is devicePixelRatio-scaled, same as the WebGL
+  // canvas) rather than CSS pixels. This already drew the whole, unclipped image, so it needed no
+  // change when the on-screen layer stopped being clipped to the stage.
   async function exportStudioPNG(){
     if (mode !== 'studio' || !gl) return;
     if (studioSlots.length === 0){ showToast(t('studioExportEmptyToast')); return; }
