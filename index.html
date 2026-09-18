@@ -3284,13 +3284,36 @@
   // constraints' mix (pet_idle/pull_idle keyframe atama/cheek heavily, which is exactly the input
   // that fed the blow-up) never gets a chance to leave a non-zero mix in place for even one frame.
   const HEAD_FOLLOW_MIX_FIELDS = ['mixX','mixY','mixRotate','mixScaleX','mixScaleY','mixShearY'];
+  // 2026-09 follow-up (still-broken report #3): after excluding atama/cheek from the freeze fixed
+  // the "볼 찌그러짐" symptom, a NEW screenshot showed a different part of the face (a fringe/brow
+  // strand) still flung diagonally across the whole face — same "unstable transform constraint"
+  // signature, just on a bone the 8-name HEAD_FOLLOW_CONSTRAINT_NAMES whitelist doesn't cover. That
+  // strongly suggests this rig has MORE than the 8 atama/cheek-to-* constraints the self-test went
+  // looking for by exact name (e.g. an eyebrow/fringe-follow constraint nobody explicitly named
+  // here yet) — and every constraint this pinned runtime instantiates as a "property-mapped
+  // transform constraint" is confirmed unstable once mix > 0 (that's the whole reason
+  // HEAD_FOLLOW_CONSTRAINT_NAMES exists), regardless of which specific bones it happens to target.
+  // Rather than keep discovering these one report at a time by adding names to the whitelist,
+  // isHeadFollowConstraint() below matches by the SAME runtime-class-name technique already trusted
+  // elsewhere in this file (getPhysicsConstraints, the disabled guardConstraintBlowups) instead of
+  // by name — so muting/freezing now automatically covers every transform constraint this runtime
+  // exposes, present or future, without needing its exact editor name known in advance.
+  // HEAD_FOLLOW_CONSTRAINT_NAMES itself is kept only as a comment/reference of the originally
+  // confirmed offenders and for fixTransformConstraintMixes()'s load-time diagnostic — no real
+  // render-path function filters on it anymore.
+  function isHeadFollowConstraint(c){
+    if (!c || !c.data) return false;
+    const ctorName = (c.constructor && c.constructor.name) || '';
+    const dataCtorName = (c.data.constructor && c.data.constructor.name) || '';
+    return /transformconstraint/i.test(ctorName) || /transformconstraint/i.test(dataCtorName);
+  }
   function muteHeadFollowConstraints(skeleton){
     const all = [].concat(
       Array.isArray(skeleton.constraints) ? skeleton.constraints : [],
       Array.isArray(skeleton.transformConstraints) ? skeleton.transformConstraints : []
     );
     all.forEach(c => {
-      if (!c || !c.data || !HEAD_FOLLOW_CONSTRAINT_NAMES.includes(c.data.name)) return;
+      if (!isHeadFollowConstraint(c)) return;
       HEAD_FOLLOW_MIX_FIELDS.forEach(field => {
         if (c.pose && field in c.pose) c.pose[field] = 0;
         if (field in c) c[field] = 0;
@@ -3348,10 +3371,15 @@
       Array.isArray(skeleton.constraints) ? skeleton.constraints : [],
       Array.isArray(skeleton.transformConstraints) ? skeleton.transformConstraints : []
     );
-    return all.filter(c => c && c.data && HEAD_FOLLOW_CONSTRAINT_NAMES.includes(c.data.name));
+    // Matches by runtime class (isHeadFollowConstraint, see muteHeadFollowConstraints above), not
+    // by the HEAD_FOLLOW_CONSTRAINT_NAMES whitelist — see the "still-broken report #3" comment
+    // there for why: the whitelist missed at least one real constraint (a fringe/brow strand went
+    // through the same blow-up untouched because its name wasn't in the list).
+    return all.filter(isHeadFollowConstraint);
   }
 
-  // The actual Bone objects these 8 constraints target (head/face/backhead/hear, per rig). Same
+  // The actual Bone objects these constraints target (head/face/backhead/hear, and whatever else
+  // this rig turns out to have — see isHeadFollowConstraint above). Same
   // BonePose-vs-Bone resolution as getPhysicsConstraintBones() below, because tc.bones entries are
   // BonePose wrappers on this build too — pushing them in raw would silently fail every
   // parent-chain walk downstream (that exact bug is documented on resolveOwningBone() below).
@@ -3368,12 +3396,12 @@
   }
 
   // Bones this freeze must NEVER touch, even if they'd otherwise be swept in as a "descendant of
-  // a target bone": 'atama' and 'cheek' are this constraint's own SOURCE/driver bones (the ones the
-  // person can grab and drag — see PET_PATTERN/PULL_PATTERN and the dragging/off.x/off.y machinery
-  // above), not targets. A source bone is never written to by the transform constraint in the first
-  // place (only its targets are), so Spine's own updateWorldTransform() already poses it correctly
-  // with no help needed here — and forcing it through computeBoneWorldRigid() is actively harmful,
-  // for two independent reasons:
+  // a target bone": each head-follow constraint's own SOURCE/driver bone (e.g. 'atama'/'cheek' —
+  // the ones the person can grab and drag, see PET_PATTERN/PULL_PATTERN and the off.x/off.y
+  // machinery above), never one of its targets. A source bone is never written to by the transform
+  // constraint in the first place (only its targets are), so Spine's own updateWorldTransform()
+  // already poses it correctly with no help needed here — and forcing it through
+  // computeBoneWorldRigid() is actively harmful, for two independent reasons:
   //   1. computeBoneWorldRigid() is a simplified re-implementation of Bone.updateWorldTransform()
   //      that always does full rotation+scale inheritance from the parent. It does NOT know about
   //      per-bone "inherit" restrictions (e.g. a cheek/blush bone commonly authored with scale
@@ -3382,34 +3410,50 @@
   //      "볼(cheek)이 찌그러짐" report: the cheek bone sits under 'head' in this rig's hierarchy, so
   //      it was being swept into the freeze as a "descendant of head" and squashed by exactly this
   //      mismatch, even though it was never broken by the constraint to begin with.
-  //   2. 'cheek'/'atama' also carry the MANUAL pull/pet drag offset (off.x/off.y, applied in
-  //      applyProceduralEffects — see the snapshot-then-restore ordering in both render-loop call
-  //      sites: snapshot happens before applyProceduralEffects, restore happens after
-  //      updateWorldTransform). Freezing them would silently cancel that manual drag effect too.
+  //   2. A source bone like 'cheek'/'atama' also carries the MANUAL pull/pet drag offset
+  //      (off.x/off.y, applied in applyProceduralEffects — see the snapshot-then-restore ordering
+  //      in both render-loop call sites: snapshot happens before applyProceduralEffects, restore
+  //      happens after updateWorldTransform). Freezing it would silently cancel that manual drag
+  //      effect too.
   // getBonesNeedingRigidRecompute()'s ALL-bones sibling (getAllBonesSortedByDepth, used only during
   // an actual isTeleportPinned drag) doesn't have this problem: it rigid-recomputes literally every
-  // bone from its own local pose, atama/cheek included, and their local pose already carries
-  // whatever off.x/off.y/pull-drag values were set — nothing here needs to special-case them for
-  // that path. This exclusion is specific to the head-follow freeze, whose whole job is narrower
-  // (only undo constraint corruption on the constraint's actual targets).
-  const HEAD_FOLLOW_SOURCE_BONE_NAMES = ['atama', 'cheek'];
+  // bone from its own local pose, sources included, and their local pose already carries whatever
+  // off.x/off.y/pull-drag values were set — nothing here needs to special-case them for that path.
+  // This exclusion is specific to the head-follow freeze, whose whole job is narrower (only undo
+  // constraint corruption on the constraint's actual targets).
+  //
+  // Resolved from each constraint's own `.source`/`.data.source` field (same field the load-time
+  // self-test already logs — see "[debug][transform-constraint]" above) rather than a hardcoded
+  // ['atama','cheek'] name pair, so a rig with a differently-named source bone (or an additional
+  // head-follow constraint driven by some other bone entirely — see the "still-broken report #3"
+  // comment on isHeadFollowConstraint above) is still excluded correctly without needing another
+  // name added here by hand.
+  function getHeadFollowSourceBones(skeleton){
+    const bones = [];
+    getHeadFollowConstraints(skeleton).forEach(tc => {
+      const rawSource = tc.source || (tc.data && tc.data.source);
+      if (!rawSource) return;
+      const b = resolveOwningBone(skeleton, rawSource) ||
+        (rawSource.data && skeleton.findBone(rawSource.data.name)) ||
+        (typeof rawSource === 'string' ? skeleton.findBone(rawSource) : null);
+      if (b) bones.push(b);
+    });
+    return bones.filter((b, i, arr) => b && arr.indexOf(b) === i);
+  }
 
-  // Target bones + every descendant, parents-first, EXCLUDING atama/cheek and anything hanging off
-  // them (see HEAD_FOLLOW_SOURCE_BONE_NAMES above) — same "don't just fix the seed bone, fix
-  // everything hanging off it too" reasoning as getBonesNeedingRigidRecompute() below (that
-  // function's own comment documents backhairSR5 being left stranded for exactly this reason), but
-  // capped so the sweep doesn't reach past a source bone into territory that was never corrupted.
+  // Target bones + every descendant, parents-first, EXCLUDING every head-follow constraint's own
+  // source bone(s) and anything hanging off them (see getHeadFollowSourceBones above) — same
+  // "don't just fix the seed bone, fix everything hanging off it too" reasoning as
+  // getBonesNeedingRigidRecompute() below (that function's own comment documents backhairSR5 being
+  // left stranded for exactly this reason), but capped so the sweep doesn't reach past a source
+  // bone into territory that was never corrupted.
   // Cached per skeleton since the bone hierarchy and constraint list never change after load.
   function getBonesNeedingHeadFollowFreeze(skeleton){
     if (skeleton.__headFollowFreezeBones) return skeleton.__headFollowFreezeBones;
     const seeds = new Set(getHeadFollowTargetBones(skeleton));
-    const sourceBones = new Set();
-    HEAD_FOLLOW_SOURCE_BONE_NAMES.forEach(name => {
-      const b = skeleton.findBone(name);
-      if (b) sourceBones.add(b);
-    });
-    // True if `b` itself, or any ancestor of `b`, is one of atama/cheek — i.e. `b` lives inside a
-    // source bone's own subtree and must be left completely alone by this freeze.
+    const sourceBones = new Set(getHeadFollowSourceBones(skeleton));
+    // True if `b` itself, or any ancestor of `b`, is one of the head-follow source bones — i.e.
+    // `b` lives inside a source bone's own subtree and must be left completely alone by this freeze.
     const isUnderSourceBone = (b) => {
       let p = b;
       while (p){
