@@ -3404,6 +3404,28 @@
     return Array.from(result);
   }
 
+  // Every bone in the skeleton, parents-first. Used by the teleport-pin recompute below instead of
+  // getBonesNeedingRigidRecompute() alone. Background: even after fixing the BonePose-vs-Bone
+  // mismatch and the "missing descendant" (SR5) case, back-hair/tail chains were still seen visibly
+  // lagging behind during a studio body-drag on video ("backhair" report) — trailing like a flag
+  // instead of staying rigidly attached, exactly the symptom setPhysicsConstraintsMuted +
+  // recomputeBoneWorldRigid was supposed to eliminate. Rather than debug yet another gap in the
+  // duck-typed physics-constraint bone enumeration (it's already needed three separate fixes: the
+  // BonePose/Bone identity mismatch, the missing-descendant walk, and the ctor-name matching), this
+  // sidesteps the enumeration problem entirely: this rig has no IK and no path constraints (both
+  // confirmed undefined in the [debug][transform-constraint] dump), and every transform constraint
+  // is permanently muted (mix 0, i.e. plain FK) — so the ONLY thing plain-FK recompute could ever
+  // discard is a physics constraint's jiggle. That means it's safe to rigid-recompute the ENTIRE
+  // skeleton during a teleport pin, not just the bones this file can positively identify as
+  // physics-driven, closing every current and future "which chain did we miss this time" gap at
+  // once. Cached per-skeleton like getConstraintGuardBones above, since the bone list never changes.
+  function getAllBonesSortedByDepth(skeleton){
+    if (skeleton.__allBonesByDepth) return skeleton.__allBonesByDepth;
+    const sorted = (skeleton.bones || []).slice().sort((a, b) => boneDepth(a) - boneDepth(b));
+    skeleton.__allBonesByDepth = sorted;
+    return sorted;
+  }
+
   function setPhysicsConstraintsMuted(skeleton, muted){
     getPhysicsConstraints(skeleton).forEach(pc => {
       if (muted){
@@ -4810,16 +4832,15 @@
           __pcPoseSnapshot.forEach(({bone, pose}) => restoreBonePose(bone, pose));
         }
         // Manual rigid-FK recompute: restored for the teleport case only (drag/resize), which is
-        // exactly the scenario it was written for. Glues every physics-constraint bone (and every
-        // descendant of one) to wherever plain FK says it should be relative to its now-jumped
-        // parent — no jiggle, no lag, no stranding — for as long as the teleport pin lasts.
-        // Reaction pins never reach here (isTeleportPinned is false), so ordinary jiggle isn't
-        // flattened by a tap or a pet.
+        // exactly the scenario it was written for. Sweeps every bone in the skeleton (see
+        // getAllBonesSortedByDepth above for why: enumerating "just the physics-constraint bones"
+        // has repeatedly missed chains, most recently the "backhair" report of hair still trailing/
+        // lagging behind mid-drag), gluing each one to wherever plain FK says it should be relative
+        // to its now-jumped parent — no jiggle, no lag, no stranding — for as long as the teleport
+        // pin lasts. Reaction pins never reach here (isTeleportPinned is false), so ordinary jiggle
+        // isn't flattened by a tap or a pet.
         if (isTeleportPinned){
-          getBonesNeedingRigidRecompute(c.skeleton)
-            .slice()
-            .sort((a, b) => boneDepth(a) - boneDepth(b))
-            .forEach(b => recomputeBoneWorldRigid(b));
+          getAllBonesSortedByDepth(c.skeleton).forEach(b => recomputeBoneWorldRigid(b));
         }
         if (false && isDragPinned){
           c.__verifyFrame = (c.__verifyFrame || 0) + 1;
