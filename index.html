@@ -3233,10 +3233,23 @@
   // covered by the self-test. With the list emptied, the original "unstable once mix > 0" blow-up
   // came back on exactly pet_idle/pull_idle (any clip that keyframes these constraints' mix hard),
   // matching the "드래그하면 분리됨, 트랜스폼제약 켜진 모션에서만" report. Since the self-test
-  // also showed zero visible follow effect even with the constraint live, muting costs nothing
-  // real and removes the blow-up. Left populated — do not empty this again without first proving
-  // the fix holds under spine.Physics.update (not .reset) during an actual pet_idle/pull_idle drag.
-  const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','atama-to-face','atama-to-backhead','atama-to-hear','cheek-to-head','cheek-to-face','cheek-to-backhead','cheek-to-hear'];
+  // also showed zero visible follow effect for head/face even with the constraint live, muting
+  // those costs nothing real and removes the blow-up.
+  //
+  // 2026-09 backhead exception: full muting fixed head/face/hear (confirmed on screenshot — no
+  // more flying-apart parts) but left 'backhead' looking newly broken in a different way — a flat,
+  // square-edged slab of hair sticking out unrotated next to the braid, not tracking the head's
+  // tilt at all ("뒷머리만 해결해주면 될듯" report). Unlike head/face/hear, backhead's own rest
+  // local pose apparently isn't a sane standalone pose — it's authored assuming the constraint's
+  // contribution is always present, so mix:0 doesn't just "lose a subtle nudge", it exposes the
+  // raw, wrong-orientation rectangle. So 'atama-to-backhead' and 'cheek-to-backhead' are excluded
+  // from this list and stay live/unmuted, while the other 6 (to head/face/hear) stay muted. If this
+  // brings back a backhead-specific blow-up during hard pet_idle/pull_idle play, the fix is a
+  // targeted guardConstraintBlowups()-style clamp on just the backhead bone (compare live vs.
+  // computeBoneWorldRigid FK each frame, snap back only past a large-deviation threshold) rather
+  // than re-muting it outright — see guardConstraintBlowups below for that machinery, currently
+  // unused elsewhere.
+  const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','atama-to-face','atama-to-hear','cheek-to-head','cheek-to-face','cheek-to-hear'];
   // Kept only for the load-time self-test's own before/after diagnostic (it needs to briefly turn
   // the native mix ON to prove the constraint *can* move bones at all) — never call this anywhere
   // else. Every real render path uses muteHeadFollowConstraints() below instead.
