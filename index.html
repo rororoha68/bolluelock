@@ -4082,8 +4082,22 @@
 
   // Mouse-wheel zoom (desktop). preventDefault stops the page itself from scrolling/zooming
   // while the cursor is over the stage.
+  //
+  // 2026-09 fix ("드래그하면 쪼그라들면서 락걸림" report): a stray wheel tick landing mid-drag
+  // (trackpad jitter, or a mouse's wheel getting brushed while its button is held) used to fall
+  // straight through to studioZoomBothAt() below with no guard at all, shrinking
+  // studioCamera.zoom right in the middle of a body/bone/background drag. Unlike the pointerdown
+  // handler's 2-finger-pinch path — which explicitly cancels dragging/gesture/panDrag/slotDrag/
+  // bgDrag the moment a pinch starts (see the comment there) — this handler had no equivalent
+  // check, so the drag and the zoom both kept running and fought over the same frame. Worse,
+  // studioCamera.zoom is sticky: nothing re-fits it automatically (see the "shrink" comment on
+  // addStudioSlot above), only the explicit 초기화/배경 위치 초기화 buttons do, so once a wheel
+  // tick snuck through, the character stayed visibly shrunk long after the drag ended — read on
+  // video as "shrinks and gets locked". Ignoring wheel entirely while any of these gestures is
+  // in flight closes the gap the same way the pinch path already does.
   canvas.addEventListener('wheel', (e)=>{
     if (!renderer) return;
+    if (dragging || gesture || panDrag || slotDrag || bgDrag || pinch) return;
     if (mode === 'studio'){
       if (!studioCamera.baseCamera) return;
       e.preventDefault();
