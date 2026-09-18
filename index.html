@@ -3359,16 +3359,61 @@
     return bones.filter((b, i, arr) => b && arr.indexOf(b) === i);
   }
 
-  // Target bones + every descendant, parents-first — same "don't just fix the seed bone, fix
+  // Bones this freeze must NEVER touch, even if they'd otherwise be swept in as a "descendant of
+  // a target bone": 'atama' and 'cheek' are this constraint's own SOURCE/driver bones (the ones the
+  // person can grab and drag — see PET_PATTERN/PULL_PATTERN and the dragging/off.x/off.y machinery
+  // above), not targets. A source bone is never written to by the transform constraint in the first
+  // place (only its targets are), so Spine's own updateWorldTransform() already poses it correctly
+  // with no help needed here — and forcing it through computeBoneWorldRigid() is actively harmful,
+  // for two independent reasons:
+  //   1. computeBoneWorldRigid() is a simplified re-implementation of Bone.updateWorldTransform()
+  //      that always does full rotation+scale inheritance from the parent. It does NOT know about
+  //      per-bone "inherit" restrictions (e.g. a cheek/blush bone commonly authored with scale
+  //      inheritance turned off, so it stays round instead of stretching when the head squashes).
+  //      Recomputing such a bone with naive full inheritance visibly warps it — this is the
+  //      "볼(cheek)이 찌그러짐" report: the cheek bone sits under 'head' in this rig's hierarchy, so
+  //      it was being swept into the freeze as a "descendant of head" and squashed by exactly this
+  //      mismatch, even though it was never broken by the constraint to begin with.
+  //   2. 'cheek'/'atama' also carry the MANUAL pull/pet drag offset (off.x/off.y, applied in
+  //      applyProceduralEffects — see the snapshot-then-restore ordering in both render-loop call
+  //      sites: snapshot happens before applyProceduralEffects, restore happens after
+  //      updateWorldTransform). Freezing them would silently cancel that manual drag effect too.
+  // getBonesNeedingRigidRecompute()'s ALL-bones sibling (getAllBonesSortedByDepth, used only during
+  // an actual isTeleportPinned drag) doesn't have this problem: it rigid-recomputes literally every
+  // bone from its own local pose, atama/cheek included, and their local pose already carries
+  // whatever off.x/off.y/pull-drag values were set — nothing here needs to special-case them for
+  // that path. This exclusion is specific to the head-follow freeze, whose whole job is narrower
+  // (only undo constraint corruption on the constraint's actual targets).
+  const HEAD_FOLLOW_SOURCE_BONE_NAMES = ['atama', 'cheek'];
+
+  // Target bones + every descendant, parents-first, EXCLUDING atama/cheek and anything hanging off
+  // them (see HEAD_FOLLOW_SOURCE_BONE_NAMES above) — same "don't just fix the seed bone, fix
   // everything hanging off it too" reasoning as getBonesNeedingRigidRecompute() below (that
-  // function's own comment documents backhairSR5 being left stranded for exactly this reason).
+  // function's own comment documents backhairSR5 being left stranded for exactly this reason), but
+  // capped so the sweep doesn't reach past a source bone into territory that was never corrupted.
   // Cached per skeleton since the bone hierarchy and constraint list never change after load.
   function getBonesNeedingHeadFollowFreeze(skeleton){
     if (skeleton.__headFollowFreezeBones) return skeleton.__headFollowFreezeBones;
     const seeds = new Set(getHeadFollowTargetBones(skeleton));
-    const result = new Set(seeds);
+    const sourceBones = new Set();
+    HEAD_FOLLOW_SOURCE_BONE_NAMES.forEach(name => {
+      const b = skeleton.findBone(name);
+      if (b) sourceBones.add(b);
+    });
+    // True if `b` itself, or any ancestor of `b`, is one of atama/cheek — i.e. `b` lives inside a
+    // source bone's own subtree and must be left completely alone by this freeze.
+    const isUnderSourceBone = (b) => {
+      let p = b;
+      while (p){
+        if (sourceBones.has(p)) return true;
+        p = p.parent;
+      }
+      return false;
+    };
+    const result = new Set();
+    seeds.forEach(b => { if (!isUnderSourceBone(b)) result.add(b); });
     (skeleton.bones || []).forEach(b => {
-      if (result.has(b)) return;
+      if (result.has(b) || isUnderSourceBone(b)) return;
       let p = b.parent;
       while (p){
         if (seeds.has(p)){ result.add(b); break; }
