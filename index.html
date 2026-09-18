@@ -4245,6 +4245,11 @@
           slotDrag = {
             slotId: slot.id, pointerId: e.pointerId,
             lastClientX: e.clientX, lastClientY: e.clientY,
+            // Fixed drag-start point (never updated after this), used only to measure total
+            // distance moved so far — see the DRAG_THRESHOLD_PX check in the pointermove handler
+            // below ("still juddering on ordinary clicks" report). lastClientX/Y above stay
+            // equal to this until that threshold is actually crossed.
+            startClientX: e.clientX, startClientY: e.clientY, moved: false,
             // Snapshot the effective (already size-scaled) bounds at drag-start so the normalized
             // offset stays consistent through the drag even though layoutStudioSlots() recomputes
             // c.bounds every frame as offsetXNorm/offsetYNorm change.
@@ -4361,14 +4366,33 @@
       const slot = studioSlots.find(s=>s.id === slotDrag.slotId);
       const c = slot && slot.char;
       if (c && renderer){
+        // FIX ("still juddering on ordinary clicks" report, after the earlier press-vs-move fix
+        // below): the previous fix moved c.__slotDragActive = true off of pointerdown and onto
+        // "the first pointermove", on the theory that a plain click never moves at all. On real
+        // mouse/trackpad/touch hardware that's not true — a human hand basically never holds
+        // perfectly still between press and release, so the OS/browser almost always delivers at
+        // least one pointermove of a pixel or two even for what the user experiences as a single
+        // click. That was enough to set __slotDragActive on effectively every click anyway, which
+        // still ran the full mute-physics -> rigid-FK-recompute -> Physics.reset-resync-on-release
+        // cycle each time — i.e. still the same hair freeze/pop described in the original report.
+        // Fixed the same way this file already handles tap-vs-drag for the pat/pull gestures (see
+        // the DRAG_THRESHOLD_PX check on `gesture` above): track the pointer's total distance from
+        // the actual press point (slotDrag.startClientX/Y, never updated), and don't touch
+        // position/physics at all until that exceeds DRAG_THRESHOLD_PX. Below the threshold this
+        // is a no-op, so a real click (or a hand-tremor-sized wobble) never pins physics, never
+        // rigid-recomputes hair, and never triggers the unpin resync pop on release. Once the
+        // threshold IS crossed, slotDrag.moved latches true for the rest of this drag so easing
+        // back under the threshold mid-drag doesn't re-freeze/un-freeze physics repeatedly.
+        if (!slotDrag.moved){
+          const distFromStart = Math.hypot(e.clientX - slotDrag.startClientX, e.clientY - slotDrag.startClientY);
+          if (distFromStart > DRAG_THRESHOLD_PX) slotDrag.moved = true;
+        }
+        if (slotDrag.moved){
         // Pin physics/jiggle bones (back hair, ears, tail, ...) to follow the body rigidly for
         // the rest of this drag — see the long comment on the old pointerdown call site (moved
         // here) for why a whole-body drag needs this at all: a hand-dragged move covers far more
         // distance per frame than any animation the rig's own author made, which reads to a
-        // physics spring as an impossible velocity and flings the hair out to the side. This is
-        // now set on the FIRST real movement of the drag, not on the initial press — see that
-        // same comment for why doing it on press alone was itself a bug (hair juddering under
-        // repeated clicks).
+        // physics spring as an impossible velocity and flings the hair out to the side.
         c.__slotDragActive = true;
         // Same screen-delta-to-world-delta conversion as the bone drag below, but applied
         // straight to the slot's normalized offset instead of a bone-local offset — the skeleton
@@ -4397,6 +4421,7 @@
         // dragged and partly cancel out its on-screen movement. It's called once in endDrag()
         // instead, after the drag settles.
         slotDrag.lastClientX = e.clientX; slotDrag.lastClientY = e.clientY;
+        } // slotDrag.moved
       }
       return;
     }
