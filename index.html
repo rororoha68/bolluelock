@@ -5126,15 +5126,39 @@
         __hfPoseSnapshot.forEach(({bone, pose}) => restoreBonePose(bone, pose));
         getBonesNeedingHeadFollowFreeze(c.skeleton).forEach(b => recomputeBoneWorldRigid(b));
         // Manual rigid-FK recompute: restored for the teleport case only (drag/resize), which is
-        // exactly the scenario it was written for. Sweeps every bone in the skeleton (see
-        // getAllBonesSortedByDepth above for why: enumerating "just the physics-constraint bones"
-        // has repeatedly missed chains, most recently the "backhair" report of hair still trailing/
-        // lagging behind mid-drag), gluing each one to wherever plain FK says it should be relative
-        // to its now-jumped parent — no jiggle, no lag, no stranding — for as long as the teleport
-        // pin lasts. Reaction pins never reach here (isTeleportPinned is false), so ordinary jiggle
-        // isn't flattened by a tap or a pet.
+        // exactly the scenario it was written for.
+        //
+        // FIX (compounding grow-on-click, "still not fixed" report): this used to sweep literally
+        // EVERY bone in the skeleton (getAllBonesSortedByDepth), on the theory that re-deriving an
+        // already-correct plain-FK bone from its own current local pose is a harmless no-op — see
+        // that function's comment for the original reasoning. In practice it wasn't a no-op: the
+        // [debug][click-pin-bounds] log kept showing shrankW a few percent ABOVE 1.000 on every
+        // single click/drag start, never below, and the character visibly grew a little more with
+        // every repeated click-drag-release cycle instead of settling back to its original size.
+        // That one-directional, per-cycle bias is exactly what compounds over many clicks: each
+        // drag's very last rigid-recompute frame becomes the new Physics.reset baseline that
+        // ordinary jiggle resumes from after release (see the pointerup handler's comment), so a
+        // baseline that's even slightly too big every time never has a chance to correct itself —
+        // it only ratchets upward.
+        // Root cause: computeBoneWorldRigid()'s hand-rolled FK math (boneWorldMatrix/boneWorldPos
+        // reading appliedPose, localMatrixFromPose's own trig) isn't bit-for-bit identical to
+        // whatever this pinned spine-webgl 4.3.13 build's real Bone.updateWorldTransform() does
+        // internally — close enough to look right for one frame, not close enough to be a true
+        // no-op. Running it on bones that were already correctly posed by the real engine (i.e.
+        // ordinary FK bones with nothing physics-driven under them — the body, limbs, cheek, etc.)
+        // only had a chance to introduce that drift; it never had anything useful to fix there in
+        // the first place. So instead of sweeping every bone "just in case", sweep only the bones
+        // this rig's physics constraints can actually leave stranded — getBonesNeedingRigidRecompute()
+        // (physics-constraint bones plus every one of their descendants, walked per-bone so no
+        // chain is missed — this is the fix for the older "backhair/SR5" enumeration gap that
+        // motivated the all-bones sweep in the first place, so that gap is closed here too, not
+        // reopened) — sorted parents-first so each child recomputes against an already-correct
+        // parent world transform.
         if (isTeleportPinned){
-          getAllBonesSortedByDepth(c.skeleton).forEach(b => recomputeBoneWorldRigid(b));
+          getBonesNeedingRigidRecompute(c.skeleton)
+            .slice()
+            .sort((a, b) => boneDepth(a) - boneDepth(b))
+            .forEach(b => recomputeBoneWorldRigid(b));
         }
         // TEMP DIAGNOSTIC continued: log the before/after bounds comparison for the pin-start
         // frame captured above, plus the shared studioCamera.zoom (ruled out separately, but
