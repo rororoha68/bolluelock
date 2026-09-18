@@ -1937,10 +1937,13 @@
           console.log('[debug][transform-constraint] TEST: moved atama by (200,200) ->', moved ? '✅ head/face MOVED (constraint is working)' : '❌ head/face DID NOT MOVE (constraint is NOT being applied by this runtime)', {before, after});
           // Diagnostic test above deliberately turned the native mix ON (via
           // fixTransformConstraintMixes) to prove the constraint is capable of moving bones at
-          // all. muteHeadFollowConstraints() re-mutes only whichever constraint names are
-          // currently listed in HEAD_FOLLOW_CONSTRAINT_NAMES (now empty — see chat history: all
-          // 10 atama/cheek-to-* constraints are intentionally left live) — for anything not in
-          // that list this is a no-op, which is correct: those should stay on from here on.
+          // all (under Physics.reset, which is all this synthetic test exercises). Real gameplay
+          // never uses Physics.reset for this path, so this test result does NOT prove the
+          // constraint is safe under normal play — see the 2026-09 RESTORED comment on
+          // HEAD_FOLLOW_CONSTRAINT_NAMES below for the regression this caused. muteHeadFollowConstraints()
+          // re-mutes every constraint named in that list (all 8 atama/cheek-to-* constraints) back
+          // to mix 0 immediately after this test, so the live game always runs muted regardless of
+          // what this diagnostic just did.
           muteHeadFollowConstraints(skeleton);
           skeleton.updateWorldTransform(spine.Physics.reset);
         } else {
@@ -3222,7 +3225,18 @@
   // 적용 직후·updateWorldTransform() 직전에 호출해, 어떤 애니메이션 클립이 이 제약들의 mix를 얼마로
   // 키프레임하든 상관없이 매 프레임 강제로 0(뮤트)으로 되돌린다. 로드 시점 self-test도 이제 이 함수를
   // 통해 뮤트 상태를 명시적으로 복구하도록 정리함 — 더 이상 "복구 후 방치"로 몰래 켜진 채 남지 않는다.
-  const HEAD_FOLLOW_CONSTRAINT_NAMES = [];
+  // 2026-09 RESTORED after a regression: a later self-test (see the [debug][transform-constraint]
+  // block above) concluded these constraints were fully inert and safe to leave live, because
+  // nudging 'atama' and re-running updateWorldTransform(spine.Physics.reset) produced zero
+  // movement. But real interactive use never calls Physics.reset for this path — it runs
+  // spine.Physics.update every frame via renderLoop/animationState — and that path was never
+  // covered by the self-test. With the list emptied, the original "unstable once mix > 0" blow-up
+  // came back on exactly pet_idle/pull_idle (any clip that keyframes these constraints' mix hard),
+  // matching the "드래그하면 분리됨, 트랜스폼제약 켜진 모션에서만" report. Since the self-test
+  // also showed zero visible follow effect even with the constraint live, muting costs nothing
+  // real and removes the blow-up. Left populated — do not empty this again without first proving
+  // the fix holds under spine.Physics.update (not .reset) during an actual pet_idle/pull_idle drag.
+  const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','atama-to-face','atama-to-backhead','atama-to-hear','cheek-to-head','cheek-to-face','cheek-to-backhead','cheek-to-hear'];
   // Kept only for the load-time self-test's own before/after diagnostic (it needs to briefly turn
   // the native mix ON to prove the constraint *can* move bones at all) — never call this anywhere
   // else. Every real render path uses muteHeadFollowConstraints() below instead.
@@ -3586,19 +3600,24 @@
   // detail on muteHeadFollowConstraints above — it was caught on video blowing a target bone up
   // to several times its size instead of nudging it). The old workaround was to mute those
   // constraints outright, but that also threw away the follow motion the rig's author actually
-  // authored in the editor, so HEAD_FOLLOW_CONSTRAINT_NAMES is now intentionally empty and the
-  // constraints run live — which brings the blow-up back on exactly the clips that drive them
-  // hard (pet_idle/pull_idle and friends).
+  // authored in the editor, so HEAD_FOLLOW_CONSTRAINT_NAMES was briefly emptied to let the
+  // constraints run live — which brought the blow-up right back on exactly the clips that drive
+  // them hard (pet_idle/pull_idle and friends). That's now reverted (see the 2026-09 RESTORED
+  // comment on HEAD_FOLLOW_CONSTRAINT_NAMES): the constraints are muted again, and
+  // muteHeadFollowConstraints() is the thing actually preventing the blow-up in production.
   //
-  // Rather than choosing between "constraint on, sometimes explodes" and "constraint off, no
-  // follow at all", this catches the explosion itself: a transform constraint is only ever
-  // supposed to nudge its target bone slightly away from where plain FK would put it. So after
-  // updateWorldTransform() has run every constraint, each constrained bone's result is compared
-  // against its own plain-FK answer (computeBoneWorldRigid above). Small differences — the real,
-  // intended follow — are left completely untouched. Differences that are physically impossible
-  // for a subtle follow (bone flung a large fraction of the rig's own size away, or its world
-  // scale multiplied/collapsed) are discarded for that frame and replaced by the plain-FK
-  // transform, which is exactly "this part stays attached where its parent says it should be".
+  // The function below was written as an alternative to muting — instead of choosing between
+  // "constraint on, sometimes explodes" and "constraint off, no follow at all", it tries to catch
+  // the explosion itself: a transform constraint is only ever supposed to nudge its target bone
+  // slightly away from where plain FK would put it. So after updateWorldTransform() has run every
+  // constraint, each constrained bone's result is compared against its own plain-FK answer
+  // (computeBoneWorldRigid above). Small differences — the real, intended follow — are left
+  // completely untouched. Differences that are physically impossible for a subtle follow (bone
+  // flung a large fraction of the rig's own size away, or its world scale multiplied/collapsed)
+  // are discarded for that frame and replaced by the plain-FK transform, which is exactly "this
+  // part stays attached where its parent says it should be". It's currently unused (see the
+  // "2026-09 DISABLED" comment at its call site) now that muting is doing the job instead — left
+  // defined in case a future rig needs this approach built on a correctly-identified bone set.
   //
   // Bones are processed parents-first and the check includes every DESCENDANT of a constrained
   // bone, because a blown-up parent hands its garbage world matrix down the chain: once the
@@ -4876,19 +4895,22 @@
         // 2026-09 DISABLED — guardConstraintBlowups() itself caused a worse corruption than the
         // problem it was guarding against (caught on video: right after its one console.warn
         // fired, the character collapsed into a tiny curled ball for several frames, then briefly
-        // filled the whole screen before recovering). Root cause: the seed bones for this guard
-        // (atama/cheek, the transform-constraint targets) are NOT skeletal parents of the head/
-        // face/hair bones they were meant to protect — that relationship only ever existed through
-        // the transform constraint itself, which is confirmed INERT on this runtime (see the
-        // [debug][transform-constraint] TEST log: moving atama does not move head/face at all).
-        // So "every descendant of atama/cheek in the parent-chain sense" is the wrong bone set
-        // entirely, and forcing wrong bones to computeBoneWorldRigid's plain-FK answer produced
-        // exactly the kind of snap/corruption it was supposed to prevent. Since transform
-        // constraints can't blow up (they don't run), there's nothing left here worth guarding —
-        // the actual physics-constraint teleport case is handled separately and correctly by the
-        // isTeleportPinned mute+recompute below. Left the function defined further down, just
-        // unused, rather than deleting it outright, in case a future rig needs the sound half of
-        // this idea (bad-bone detection) built on a correct bone set.
+        // filled the whole screen before recovering), so it was turned off in favor of the simpler
+        // fix: keep the transform constraints muted via HEAD_FOLLOW_CONSTRAINT_NAMES /
+        // muteHeadFollowConstraints() instead of letting them run live and trying to correct the
+        // fallout after the fact.
+        //
+        // NOTE (2026-09, corrected): the disable was originally justified here by claiming the
+        // transform constraints are fully INERT on this runtime — based on the
+        // [debug][transform-constraint] self-test, which only exercises spine.Physics.reset. Real
+        // per-frame playback runs spine.Physics.update, a path that self-test never covered, and
+        // muting was found to still be necessary there (see HEAD_FOLLOW_CONSTRAINT_NAMES). So the
+        // constraints are NOT proven inert in general — only observed inert under .reset — and
+        // this guard staying off is safe only because muting handles the real blow-up upstream of
+        // this point, not because there's nothing left to guard. Left the function defined further
+        // down, unused, in case a future rig needs this approach built on a correctly-verified bone
+        // set (its own bone-seeding logic was never actually confirmed wrong, just untested under
+        // the conditions that matter).
         // guardConstraintBlowups(c);
         // Studio rotation slider: NOT applied as a root-bone rotation (tried that first — see the
         // git history for the old approach). Setting root.rotation before updateWorldTransform()
