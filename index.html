@@ -3660,8 +3660,23 @@
     if (skeleton.__headFollowFreezeBones) return skeleton.__headFollowFreezeBones;
     const seeds = new Set(getHeadFollowTargetBones(skeleton));
     const sourceBones = new Set(getHeadFollowSourceBones(skeleton));
-    // True if `b` itself, or any ancestor of `b`, is one of the head-follow source bones — i.e.
-    // `b` lives inside a source bone's own subtree and must be left completely alone by this freeze.
+    // 2026-09 follow-up (report #5, "볼이 찌그러져" — a jiggle/pom-pom decoration, e.g. 'boll*' or
+    // 'backhairSR*', deforming even at idle, no drag): these bones sit under head/face/backhead/
+    // hear/backhair in the hierarchy, so the descendant sweep below was pulling them into the
+    // freeze set even though they're driven by a PhysicsConstraint, not by the head-follow
+    // transform constraint this freeze exists to correct. The freeze's snapshot-before/restore-
+    // after sequence (see __hfPoseSnapshot in renderLoop) reverts each frozen bone's LOCAL pose to
+    // whatever it was right before updateWorldTransform() ran — but a physics-driven bone's local
+    // pose is exactly what spine.Physics.update() writes its spring simulation result INTO, inside
+    // that same updateWorldTransform() call. So restoring the pre-physics snapshot was silently
+    // discarding that frame's jiggle result for every such bone, every frame, even with no drag
+    // and no atama/cheek motion involved at all — which reads visually as the jiggle part snapping/
+    // deforming instead of swaying. Excluding physics-driven bones (and everything hanging off
+    // them, same reasoning as getBonesNeedingRigidRecompute below) leaves their real,
+    // physics-simulated world transform alone; only the plain-FK decorative bones that actually
+    // needed this freeze (eyelashes, fronthair points, etc. — nothing with its own physics spring)
+    // still get it.
+    const physicsBones = new Set(getBonesNeedingRigidRecompute(skeleton));
     const isUnderSourceBone = (b) => {
       let p = b;
       while (p){
@@ -3671,9 +3686,9 @@
       return false;
     };
     const result = new Set();
-    seeds.forEach(b => { if (!isUnderSourceBone(b)) result.add(b); });
+    seeds.forEach(b => { if (!isUnderSourceBone(b) && !physicsBones.has(b)) result.add(b); });
     (skeleton.bones || []).forEach(b => {
-      if (result.has(b) || isUnderSourceBone(b)) return;
+      if (result.has(b) || isUnderSourceBone(b) || physicsBones.has(b)) return;
       let p = b.parent;
       while (p){
         if (seeds.has(p)){ result.add(b); break; }
