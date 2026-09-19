@@ -1958,57 +1958,6 @@
         );
         const tcs = allConstraints.filter(c => c && c.data && watchNames.includes(c.data.name));
         console.log('[debug][transform-constraint] found', tcs.length, 'of', watchNames.length, 'expected constraints (searched', allConstraints.length, 'total constraint objects)');
-
-        // --- DEBUG: full unfiltered dump ---------------------------------------------------
-        // Everything above only looks at the 8 names in watchNames, so anything outside that
-        // whitelist (the "other" constraint that isn't head-follow related, or a head-follow
-        // constraint with a name/source that doesn't match the "<atama|cheek>-to-*" pattern
-        // isHeadFollowConstraint() now checks) is invisible in the log above. This dumps every
-        // TransformConstraint on the skeleton, whitelisted or not, with its real name/source/
-        // target bones/mix, so the actual rig data — not a guess — can drive the next fix.
-        const allTransformConstraints = allConstraints.filter(c => {
-          const ctorName = (c.constructor && c.constructor.name) || '';
-          const dataCtorName = (c.data && c.data.constructor && c.data.constructor.name) || '';
-          return /transformconstraint/i.test(ctorName) || /transformconstraint/i.test(dataCtorName);
-        });
-        console.log('[debug][transform-constraint][full-dump]', allTransformConstraints.length, 'total TransformConstraint object(s) on this skeleton:');
-        allTransformConstraints.forEach(c => {
-          const rawSource = c.source || (c.data && c.data.source);
-          const sourceName = rawSource ? (rawSource.data ? rawSource.data.name : rawSource) : undefined;
-          const boneNames = (c.bones || []).map(b => (b && b.bone && b.bone.data) ? b.bone.data.name : (b && b.data ? b.data.name : b));
-          // Logged as a JSON string (not a live object) on purpose: a live object logged to the
-          // console collapses to the word "Object" when copy-pasted as plain text unless someone
-          // manually clicks to expand every row first. Stringifying makes every field visible in
-          // a straight copy-paste, no expanding required.
-          console.log('[debug][transform-constraint][full-dump]', JSON.stringify({
-            name: c.data && c.data.name,
-            isWhitelisted: !!(c.data && watchNames.includes(c.data.name)),
-            isMutedByIsHeadFollowConstraint: (typeof isHeadFollowConstraint === 'function') ? isHeadFollowConstraint(c) : 'n/a',
-            source: sourceName,
-            targetBones: boneNames,
-            dataMixX: c.data && c.data.mixX,
-            liveMixX: c.mixX !== undefined ? c.mixX : (c.pose ? c.pose.mixX : undefined)
-          }));
-        });
-        // Also dump what the freeze logic (getBonesNeedingHeadFollowFreeze) resolves this rig
-        // down to: its target bones, its source bones (should include 'atama'/'cheek' and be
-        // EXCLUDED from the freeze set), and the final bone list it will rigid-recompute every
-        // frame. If 'cheek' (or 'atama') shows up in freezeBones below, that's the "볼 찌그러짐"
-        // bug reproducing — a source bone is never supposed to be forced through
-        // computeBoneWorldRigid().
-        try {
-          const targetBones = (typeof getHeadFollowTargetBones === 'function') ? getHeadFollowTargetBones(skeleton).map(b => b.data.name) : 'n/a';
-          const sourceBones = (typeof getHeadFollowSourceBones === 'function') ? getHeadFollowSourceBones(skeleton).map(b => b.data.name) : 'n/a';
-          const freezeBones = (typeof getBonesNeedingHeadFollowFreeze === 'function') ? getBonesNeedingHeadFollowFreeze(skeleton).map(b => b.data.name) : 'n/a';
-          console.log('[debug][transform-constraint][freeze-scope]', JSON.stringify({
-            targetBones, sourceBones, freezeBones,
-            cheekIsInFreezeBones: Array.isArray(freezeBones) ? freezeBones.includes('cheek') : 'n/a',
-            atamaIsInFreezeBones: Array.isArray(freezeBones) ? freezeBones.includes('atama') : 'n/a'
-          }));
-        } catch (err) {
-          console.error('[debug][transform-constraint][freeze-scope] threw', err);
-        }
-        // --- end full-dump -------------------------------------------------------------------
         tcs.forEach(tc => {
           console.log('[debug][transform-constraint]', tc.data.name, {
             source: tc.source ? (tc.source.data ? tc.source.data.name : tc.source) : tc.data.source,
@@ -3487,33 +3436,11 @@
   // HEAD_FOLLOW_CONSTRAINT_NAMES itself is kept only as a comment/reference of the originally
   // confirmed offenders and for fixTransformConstraintMixes()'s load-time diagnostic — no real
   // render-path function filters on it anymore.
-  // 2026-09 follow-up (report #4, "트랜스폼제약이 안먹는다" — after the report #3 fix, an unrelated
-  // TransformConstraint on this rig, nothing to do with atama/cheek head-follow, stopped working):
-  // matching purely by runtime class name (as report #3 introduced) mutes/freezes EVERY
-  // TransformConstraint the rig has, every frame, forever — including ones that were never part of
-  // the "atama/cheek -> head/face/backhead/hear" unstable family and were working fine before. That
-  // silently zeroed their mix with no error, which looks exactly like "the constraint doesn't take
-  // effect."
-  // Fix: go back to matching the actual known-unstable family, but by PATTERN instead of the
-  // original hardcoded 8-name whitelist (so report #3's fringe/brow-strand case — a constraint with
-  // the same atama/cheek-driven shape but a name not in the original list — still gets caught).
-  // Every constraint in the unstable family is authored as "<source>-to-<target>" with atama or
-  // cheek as the source (see HEAD_FOLLOW_CONSTRAINT_NAMES above), so check that naming pattern
-  // first, and fall back to checking the constraint's actual .source/.data.source bone name for any
-  // constraint that doesn't follow the naming convention but is still atama/cheek-driven. A
-  // TransformConstraint driven by, or named after, anything else is left alone.
   function isHeadFollowConstraint(c){
     if (!c || !c.data) return false;
     const ctorName = (c.constructor && c.constructor.name) || '';
     const dataCtorName = (c.data.constructor && c.data.constructor.name) || '';
-    const isTransformConstraint = /transformconstraint/i.test(ctorName) || /transformconstraint/i.test(dataCtorName);
-    if (!isTransformConstraint) return false;
-    const name = c.data.name || '';
-    if (/^(atama|cheek)-to-/i.test(name)) return true;
-    const rawSource = c.source || c.data.source;
-    const sourceName = (rawSource && rawSource.data && rawSource.data.name) ||
-      (typeof rawSource === 'string' ? rawSource : '') || '';
-    return /^(atama|cheek)$/i.test(sourceName);
+    return /transformconstraint/i.test(ctorName) || /transformconstraint/i.test(dataCtorName);
   }
   function muteHeadFollowConstraints(skeleton){
     const all = [].concat(
@@ -3660,23 +3587,8 @@
     if (skeleton.__headFollowFreezeBones) return skeleton.__headFollowFreezeBones;
     const seeds = new Set(getHeadFollowTargetBones(skeleton));
     const sourceBones = new Set(getHeadFollowSourceBones(skeleton));
-    // 2026-09 follow-up (report #5, "볼이 찌그러져" — a jiggle/pom-pom decoration, e.g. 'boll*' or
-    // 'backhairSR*', deforming even at idle, no drag): these bones sit under head/face/backhead/
-    // hear/backhair in the hierarchy, so the descendant sweep below was pulling them into the
-    // freeze set even though they're driven by a PhysicsConstraint, not by the head-follow
-    // transform constraint this freeze exists to correct. The freeze's snapshot-before/restore-
-    // after sequence (see __hfPoseSnapshot in renderLoop) reverts each frozen bone's LOCAL pose to
-    // whatever it was right before updateWorldTransform() ran — but a physics-driven bone's local
-    // pose is exactly what spine.Physics.update() writes its spring simulation result INTO, inside
-    // that same updateWorldTransform() call. So restoring the pre-physics snapshot was silently
-    // discarding that frame's jiggle result for every such bone, every frame, even with no drag
-    // and no atama/cheek motion involved at all — which reads visually as the jiggle part snapping/
-    // deforming instead of swaying. Excluding physics-driven bones (and everything hanging off
-    // them, same reasoning as getBonesNeedingRigidRecompute below) leaves their real,
-    // physics-simulated world transform alone; only the plain-FK decorative bones that actually
-    // needed this freeze (eyelashes, fronthair points, etc. — nothing with its own physics spring)
-    // still get it.
-    const physicsBones = new Set(getBonesNeedingRigidRecompute(skeleton));
+    // True if `b` itself, or any ancestor of `b`, is one of the head-follow source bones — i.e.
+    // `b` lives inside a source bone's own subtree and must be left completely alone by this freeze.
     const isUnderSourceBone = (b) => {
       let p = b;
       while (p){
@@ -3686,9 +3598,9 @@
       return false;
     };
     const result = new Set();
-    seeds.forEach(b => { if (!isUnderSourceBone(b) && !physicsBones.has(b)) result.add(b); });
+    seeds.forEach(b => { if (!isUnderSourceBone(b)) result.add(b); });
     (skeleton.bones || []).forEach(b => {
-      if (result.has(b) || isUnderSourceBone(b) || physicsBones.has(b)) return;
+      if (result.has(b) || isUnderSourceBone(b)) return;
       let p = b.parent;
       while (p){
         if (seeds.has(p)){ result.add(b); break; }
