@@ -1868,6 +1868,16 @@
       }
 
       const skeleton = new spine.Skeleton(skeletonData);
+      // Every updateWorldTransform() on this skeleton (render loop, drag re-sync, self-tests...) first
+      // re-bases the transform-constraint offsets for its current skeleton.x/y — see
+      // applyHeadFollowTranslationComp. SkeletonData is shared, so this must run right before each call.
+      {
+        const __origUWT = skeleton.updateWorldTransform.bind(skeleton);
+        skeleton.updateWorldTransform = function(physics){
+          try { applyHeadFollowTranslationComp(skeleton); } catch (e) { /* never break rendering */ }
+          return __origUWT(physics);
+        };
+      }
       skeleton.setupPose();
 
       // Skins: use manifest-provided metadata (name/label/description per skin) when given, else
@@ -3511,6 +3521,51 @@
   // you do build a similar guard again, base its bone set on getBonesNeedingHeadFollowFreeze() below
   // (the constraint's own real target bones), not on a parent-chain guess.
   // ---------------------------------------------------------------------------------------
+  // 2026-09 "다시 뜯어짐" 진짜 원인 (transform constraint가 살아난 뒤): 이 constraint는 월드 좌표 기준의
+  // 절대(non-additive) 매핑이다 — spine-core TransformConstraint.update()/ToX.apply()를 보면
+  //   value = to.offset + (source.worldX/scaleX - from.offset) * to.scale
+  //   target.worldX += (value - target.worldX/scaleX) * mixX
+  // 인데, 스튜디오는 캐릭터를 skeleton.x/y(월드 평행이동)로 배치한다. source/target의 worldX에는 이
+  // 평행이동이 그대로 들어가지만 to.offset/from.offset은 에디터 좌표(평행이동 0) 기준이라, 캐릭터가
+  // 원점에서 멀수록 (평행이동 × mix)만큼 target(head/face/backhead/hear)이 원점 쪽으로 끌려가 뜯어진다.
+  // 그래서 skeleton.x/y가 0에 가까운 단일 뷰어에서는 멀쩡하고, 옮긴 스튜디오 캐릭터에서만 심해짐.
+  // 고침: updateWorldTransform() 직전에 from/to property의 offset(과 clamp용 max)에 평행이동분을
+  // 더해서 결과가 에디터와 동일해지게 한다(스케일은 런타임이 이미 나눠줌).
+  function applyHeadFollowTranslationComp(skeleton){
+    const all = [].concat(
+      Array.isArray(skeleton.constraints) ? skeleton.constraints : [],
+      Array.isArray(skeleton.transformConstraints) ? skeleton.transformConstraints : []
+    );
+    const dx = (skeleton.x || 0) / (skeleton.scaleX || 1);
+    const dy = (skeleton.y || 0) / (skeleton.scaleY || 1);
+    const kind = (o) => ((o && o.constructor && o.constructor.name) || '');
+    all.forEach(c => {
+      if (!isHeadFollowConstraint(c)) return;
+      const data = c.data;
+      if (!data || !Array.isArray(data.properties)) return;
+      data.properties.forEach(from => {
+        if (from.__baseOffset === undefined) from.__baseOffset = from.offset;
+        let shift = 0;
+        if (!data.localSource){
+          const k = kind(from);
+          if (/fromx$/i.test(k)) shift = dx;
+          else if (/fromy$/i.test(k)) shift = dy;
+        }
+        from.offset = from.__baseOffset + shift;
+        (from.to || []).forEach(to => {
+          if (to.__baseOffset === undefined){ to.__baseOffset = to.offset; to.__baseMax = to.max; }
+          let tshift = 0;
+          if (!data.localTarget && !data.additive){
+            const k = kind(to);
+            if (/tox$/i.test(k)) tshift = dx;
+            else if (/toy$/i.test(k)) tshift = dy;
+          }
+          to.offset = to.__baseOffset + tshift;
+          to.max = to.__baseMax + tshift;
+        });
+      });
+    });
+  }
   // One-shot console diagnostic so we can see the mix values the constraints actually run with.
   function logHeadFollowLiveMixOnce(skeleton){
     if (window.__hfLiveMixLogged) return;
