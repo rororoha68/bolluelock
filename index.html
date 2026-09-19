@@ -1976,15 +1976,38 @@
           const rawSource = c.source || (c.data && c.data.source);
           const sourceName = rawSource ? (rawSource.data ? rawSource.data.name : rawSource) : undefined;
           const boneNames = (c.bones || []).map(b => (b && b.bone && b.bone.data) ? b.bone.data.name : (b && b.data ? b.data.name : b));
-          console.log('[debug][transform-constraint][full-dump]', {
+          // Logged as a JSON string (not a live object) on purpose: a live object logged to the
+          // console collapses to the word "Object" when copy-pasted as plain text unless someone
+          // manually clicks to expand every row first. Stringifying makes every field visible in
+          // a straight copy-paste, no expanding required.
+          console.log('[debug][transform-constraint][full-dump]', JSON.stringify({
             name: c.data && c.data.name,
             isWhitelisted: !!(c.data && watchNames.includes(c.data.name)),
             isMutedByIsHeadFollowConstraint: (typeof isHeadFollowConstraint === 'function') ? isHeadFollowConstraint(c) : 'n/a',
             source: sourceName,
             targetBones: boneNames,
-            mixX: c.mixX !== undefined ? c.mixX : (c.pose ? c.pose.mixX : undefined)
-          });
+            dataMixX: c.data && c.data.mixX,
+            liveMixX: c.mixX !== undefined ? c.mixX : (c.pose ? c.pose.mixX : undefined)
+          }));
         });
+        // Also dump what the freeze logic (getBonesNeedingHeadFollowFreeze) resolves this rig
+        // down to: its target bones, its source bones (should include 'atama'/'cheek' and be
+        // EXCLUDED from the freeze set), and the final bone list it will rigid-recompute every
+        // frame. If 'cheek' (or 'atama') shows up in freezeBones below, that's the "볼 찌그러짐"
+        // bug reproducing — a source bone is never supposed to be forced through
+        // computeBoneWorldRigid().
+        try {
+          const targetBones = (typeof getHeadFollowTargetBones === 'function') ? getHeadFollowTargetBones(skeleton).map(b => b.data.name) : 'n/a';
+          const sourceBones = (typeof getHeadFollowSourceBones === 'function') ? getHeadFollowSourceBones(skeleton).map(b => b.data.name) : 'n/a';
+          const freezeBones = (typeof getBonesNeedingHeadFollowFreeze === 'function') ? getBonesNeedingHeadFollowFreeze(skeleton).map(b => b.data.name) : 'n/a';
+          console.log('[debug][transform-constraint][freeze-scope]', JSON.stringify({
+            targetBones, sourceBones, freezeBones,
+            cheekIsInFreezeBones: Array.isArray(freezeBones) ? freezeBones.includes('cheek') : 'n/a',
+            atamaIsInFreezeBones: Array.isArray(freezeBones) ? freezeBones.includes('atama') : 'n/a'
+          }));
+        } catch (err) {
+          console.error('[debug][transform-constraint][freeze-scope] threw', err);
+        }
         // --- end full-dump -------------------------------------------------------------------
         tcs.forEach(tc => {
           console.log('[debug][transform-constraint]', tc.data.name, {
