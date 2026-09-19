@@ -3392,6 +3392,15 @@
   // static backhead look needs fixing later, do it as a per-frame clamp/guard on just that bone
   // (compare live position to computeBoneWorldRigid FK, snap back only past a large-deviation
   // threshold — see guardConstraintBlowups below) rather than unmuting the constraint outright.
+  // 2026-09 (사용자 리포트: "cheek-to / atama-to 제약이 안 먹어"): 위 두 겹의 안전장치가 제약을
+  // 통째로 죽이고 있었음 — ①muteHeadFollowConstraints()가 매 프레임 모든 transform constraint의 mix를
+  // 0으로 강제, ②getBonesNeedingHeadFollowFreeze()가 대상 본(head/face/backhead/hear + 자손)의
+  // 로컬 포즈를 updateWorldTransform() 전후로 되돌리고 FK로 월드를 재계산해서 제약 결과를 통째로
+  // 덮어씀. 둘 다 "제약이 불안정하다"는 초기 오진단 때문에 들어간 것인데, 진짜 원인은 로드 시
+  // self-test의 Physics.update(→ Physics.reset으로 이미 수정됨)가 물리 스프링을 망가뜨린 것이었음.
+  // 그래서 이 플래그가 true면 두 장치를 모두 no-op으로 만들어 네이티브 제약이 그대로 계산되게 한다.
+  // (되돌리고 싶으면 false)
+  const HEAD_FOLLOW_CONSTRAINTS_LIVE = true;
   const HEAD_FOLLOW_CONSTRAINT_NAMES = ['atama-to-head','atama-to-face','atama-to-backhead','atama-to-hear','cheek-to-head','cheek-to-face','cheek-to-backhead','cheek-to-hear'];
   // Kept only for the load-time self-test's own before/after diagnostic (it needs to briefly turn
   // the native mix ON to prove the constraint *can* move bones at all) — never call this anywhere
@@ -3443,6 +3452,7 @@
     return /transformconstraint/i.test(ctorName) || /transformconstraint/i.test(dataCtorName);
   }
   function muteHeadFollowConstraints(skeleton){
+    if (HEAD_FOLLOW_CONSTRAINTS_LIVE) return; // constraints are live — see HEAD_FOLLOW_CONSTRAINTS_LIVE
     const all = [].concat(
       Array.isArray(skeleton.constraints) ? skeleton.constraints : [],
       Array.isArray(skeleton.transformConstraints) ? skeleton.transformConstraints : []
@@ -3501,6 +3511,18 @@
   // you do build a similar guard again, base its bone set on getBonesNeedingHeadFollowFreeze() below
   // (the constraint's own real target bones), not on a parent-chain guess.
   // ---------------------------------------------------------------------------------------
+  // One-shot console diagnostic so we can see the mix values the constraints actually run with.
+  function logHeadFollowLiveMixOnce(skeleton){
+    if (window.__hfLiveMixLogged) return;
+    window.__hfLiveMixLogged = true;
+    try {
+      const rows = getHeadFollowConstraints(skeleton).map(tc => {
+        const pose = tc.appliedPose || tc.pose || tc;
+        return { name: tc.data && tc.data.name, mixX: pose.mixX, mixY: pose.mixY, mixRotate: pose.mixRotate, dataMixX: tc.data && tc.data.mixX };
+      });
+      console.log('[debug][head-follow-live] constraint mixes in first live frame', rows);
+    } catch (e) { console.warn('[debug][head-follow-live] log failed', e); }
+  }
   function getHeadFollowConstraints(skeleton){
     const all = [].concat(
       Array.isArray(skeleton.constraints) ? skeleton.constraints : [],
@@ -3584,6 +3606,7 @@
   // bone into territory that was never corrupted.
   // Cached per skeleton since the bone hierarchy and constraint list never change after load.
   function getBonesNeedingHeadFollowFreeze(skeleton){
+    if (HEAD_FOLLOW_CONSTRAINTS_LIVE) return []; // no freeze/FK-override while constraints are live
     if (skeleton.__headFollowFreezeBones) return skeleton.__headFollowFreezeBones;
     const seeds = new Set(getHeadFollowTargetBones(skeleton));
     const sourceBones = new Set(getHeadFollowSourceBones(skeleton));
@@ -5185,6 +5208,7 @@
         // after apply() (which is what would have re-enabled it) and before
         // updateWorldTransform() below (which is what actually runs the buggy constraint math).
         muteHeadFollowConstraints(c.skeleton);
+        logHeadFollowLiveMixOnce(c.skeleton);
         // See the big "NOTE FOR THE NEXT AI" comment on getBonesNeedingHeadFollowFreeze() above:
         // muting mix alone (just above) was proven insufficient by video (report #2) — head/face/
         // hair still inflate on pull_idle/pet_idle. Snapshot these bones' LOCAL pose now (post-mute,
@@ -5538,6 +5562,7 @@
     // Same re-mute as the studio render loop — see muteHeadFollowConstraints for why this has to
     // run every frame, after apply() and before updateWorldTransform().
     muteHeadFollowConstraints(c.skeleton);
+    logHeadFollowLiveMixOnce(c.skeleton);
     // Same head-follow local-pose freeze as the studio loop above — see the "NOTE FOR THE NEXT AI"
     // comment on getBonesNeedingHeadFollowFreeze() for the full writeup. Needed here too: the
     // single-viewer path plays the exact same pull_idle/pet_idle clips, so it's just as exposed to
