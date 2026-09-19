@@ -3436,11 +3436,33 @@
   // HEAD_FOLLOW_CONSTRAINT_NAMES itself is kept only as a comment/reference of the originally
   // confirmed offenders and for fixTransformConstraintMixes()'s load-time diagnostic — no real
   // render-path function filters on it anymore.
+  // 2026-09 follow-up (report #4, "트랜스폼제약이 안먹는다" — after the report #3 fix, an unrelated
+  // TransformConstraint on this rig, nothing to do with atama/cheek head-follow, stopped working):
+  // matching purely by runtime class name (as report #3 introduced) mutes/freezes EVERY
+  // TransformConstraint the rig has, every frame, forever — including ones that were never part of
+  // the "atama/cheek -> head/face/backhead/hear" unstable family and were working fine before. That
+  // silently zeroed their mix with no error, which looks exactly like "the constraint doesn't take
+  // effect."
+  // Fix: go back to matching the actual known-unstable family, but by PATTERN instead of the
+  // original hardcoded 8-name whitelist (so report #3's fringe/brow-strand case — a constraint with
+  // the same atama/cheek-driven shape but a name not in the original list — still gets caught).
+  // Every constraint in the unstable family is authored as "<source>-to-<target>" with atama or
+  // cheek as the source (see HEAD_FOLLOW_CONSTRAINT_NAMES above), so check that naming pattern
+  // first, and fall back to checking the constraint's actual .source/.data.source bone name for any
+  // constraint that doesn't follow the naming convention but is still atama/cheek-driven. A
+  // TransformConstraint driven by, or named after, anything else is left alone.
   function isHeadFollowConstraint(c){
     if (!c || !c.data) return false;
     const ctorName = (c.constructor && c.constructor.name) || '';
     const dataCtorName = (c.data.constructor && c.data.constructor.name) || '';
-    return /transformconstraint/i.test(ctorName) || /transformconstraint/i.test(dataCtorName);
+    const isTransformConstraint = /transformconstraint/i.test(ctorName) || /transformconstraint/i.test(dataCtorName);
+    if (!isTransformConstraint) return false;
+    const name = c.data.name || '';
+    if (/^(atama|cheek)-to-/i.test(name)) return true;
+    const rawSource = c.source || c.data.source;
+    const sourceName = (rawSource && rawSource.data && rawSource.data.name) ||
+      (typeof rawSource === 'string' ? rawSource : '') || '';
+    return /^(atama|cheek)$/i.test(sourceName);
   }
   function muteHeadFollowConstraints(skeleton){
     const all = [].concat(
