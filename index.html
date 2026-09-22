@@ -408,6 +408,10 @@
   .studio-slot-layer-btn{ flex:0 0 auto; background:none; border:1px solid var(--panel-border); color:var(--text-muted); width:26px; height:26px; border-radius:50%; cursor:pointer; font-size:12px; line-height:1; }
   .studio-slot-layer-btn:hover:not(:disabled){ border-color:var(--accent-2); color:var(--accent-2); }
   .studio-slot-layer-btn:disabled{ opacity:0.35; cursor:default; }
+  /* Flip button reuses the layer-btn look, plus a filled "on" state so it's obvious the
+     character is currently mirrored even after the panel re-renders. */
+  .studio-slot-flip-btn.active{ background:var(--accent); border-color:var(--accent); color:#1a1420; }
+  .studio-slot-flip-btn.active:hover{ border-color:var(--accent); color:#1a1420; }
 
   .site-footer{
     padding:14px 24px 20px; border-top:1px solid var(--panel-border);
@@ -884,7 +888,7 @@
       studioFullNote: '무대가 가득 찼어요 (최대 5명)',
       studioPickTitle: '무대에 세울 캐릭터 고르기',
       studioPickConfirm: '무대에 세우기',
-      studioStageHint: '캐릭터를 드래그하면 그 캐릭터만 이동하고, 배경을 드래그하면 배경만 이동해요. 휠/핀치로는 무대 전체를 확대·축소할 수 있어요. 캐릭터마다 크기·회전·모션·재생 속도를 따로 조절할 수 있고, ↑/↓ 버튼으로 캐릭터가 겹칠 때 앞뒤 순서를 바꿀 수 있어요.',
+      studioStageHint: '캐릭터를 드래그하면 그 캐릭터만 이동하고, 배경을 드래그하면 배경만 이동해요. 휠/핀치로는 무대 전체를 확대·축소할 수 있어요. 캐릭터마다 크기·회전·모션·재생 속도를 따로 조절할 수 있고, ↔ 버튼으로 좌우반전, ↑/↓ 버튼으로 캐릭터가 겹칠 때 앞뒤 순서를 바꿀 수 있어요.',
       studioSlotLoading: '불러오는 중…',
       studioBgUpload: '배경 이미지 넣기',
       studioBgClear: '배경 지우기',
@@ -905,7 +909,8 @@
       studioBetaBodyHtml: '스튜디오는 아직 <strong>베타 기능</strong>이에요. 사용하기 전에 아래 내용을 확인해주세요.<ul class="beta-notice-list"><li>무대에 세운 캐릭터·배경·위치·크기는 <strong>저장되지 않아요.</strong> 새로고침하거나 창을 닫으면 빈 무대로 돌아가니, 마음에 드는 장면은 <strong>PNG로 내보내기</strong>로 먼저 저장해주세요.</li><li>캐릭터를 여러 명 세우면 기기에 따라 화면이 버벅일 수 있어요. 데스크톱 환경을 권해요.</li><li>모션이나 파츠가 어긋나 보이는 등 아직 다듬고 있는 부분이 있어요.</li><li>기능과 화면 구성은 예고 없이 바뀔 수 있어요.</li></ul>',
       studioBetaConfirm: '확인했어요',
       studioLayerForward: '앞으로',
-      studioLayerBackward: '뒤로'
+      studioLayerBackward: '뒤로',
+      studioFlipLabel: '좌우반전'
     },
     en: {
       patchNotes: 'Patch Notes',
@@ -956,7 +961,7 @@
       studioFullNote: 'Stage is full (max 5)',
       studioPickTitle: 'Choose a character for the stage',
       studioPickConfirm: 'Add to stage',
-      studioStageHint: 'Drag a character to move just that one, or drag the background to move just the background. Scroll/pinch zooms the whole stage. Each character has its own size, rotation, motion, and playback-speed controls, and the \u2191/\u2193 buttons let you reorder characters when they overlap.',
+      studioStageHint: 'Drag a character to move just that one, or drag the background to move just the background. Scroll/pinch zooms the whole stage. Each character has its own size, rotation, motion, and playback-speed controls, the \u2194 button flips it horizontally, and the \u2191/\u2193 buttons let you reorder characters when they overlap.',
       studioSlotLoading: 'Loading…',
       studioBgUpload: 'Set background image',
       studioBgClear: 'Clear background',
@@ -977,7 +982,8 @@
       studioBetaBodyHtml: 'The Studio is still a <strong>beta feature</strong>. A few things to know before you start.<ul class="beta-notice-list"><li>Characters, backgrounds, positions, and sizes on the stage are <strong>not saved.</strong> Refreshing or closing the tab brings you back to an empty stage, so use <strong>Export as PNG</strong> to keep a scene you like.</li><li>Placing several characters at once may feel choppy depending on your device. A desktop is recommended.</li><li>Some parts are still being polished — motions or body parts may look slightly off.</li><li>Features and layout may change without notice.</li></ul>',
       studioBetaConfirm: 'Got it',
       studioLayerForward: 'Forward',
-      studioLayerBackward: 'Backward'
+      studioLayerBackward: 'Backward',
+      studioFlipLabel: 'Flip horizontally'
     },
     ja: {
       patchNotes: 'パッチノート',
@@ -1028,7 +1034,7 @@
       studioFullNote: 'ステージが満員です(最大5人)',
       studioPickTitle: 'ステージに立てるキャラクターを選ぶ',
       studioPickConfirm: 'ステージに立てる',
-      studioStageHint: 'キャラクターをドラッグするとそのキャラクターだけ移動し、背景をドラッグすると背景だけ移動します。ホイール/ピンチではステージ全体を拡大縮小できます。キャラクターごとに大きさ・回転・モーション・再生速度を個別に調整でき、↑/↓ボタンでキャラクター同士が重なったときの前後関係を変更できます。',
+      studioStageHint: 'キャラクターをドラッグするとそのキャラクターだけ移動し、背景をドラッグすると背景だけ移動します。ホイール/ピンチではステージ全体を拡大縮小できます。キャラクターごとに大きさ・回転・モーション・再生速度を個別に調整でき、↔ボタンで左右反転、↑/↓ボタンでキャラクター同士が重なったときの前後関係を変更できます。',
       studioSlotLoading: '読み込み中…',
       studioBgUpload: '背景画像を設定',
       studioBgClear: '背景を消す',
@@ -1049,7 +1055,8 @@
       studioBetaBodyHtml: 'スタジオはまだ<strong>ベータ機能</strong>です。ご利用の前に以下をご確認ください。<ul class="beta-notice-list"><li>ステージに並べたキャラクター・背景・位置・サイズは<strong>保存されません。</strong>再読み込みやタブを閉じると空のステージに戻るため、気に入った場面は先に<strong>PNGで書き出し</strong>から保存してください。</li><li>キャラクターを複数並べると、端末によっては動作が重くなることがあります。デスクトップ環境を推奨します。</li><li>モーションやパーツの表示がずれるなど、まだ調整中の部分があります。</li><li>機能や画面構成は予告なく変更される場合があります。</li></ul>',
       studioBetaConfirm: '確認しました',
       studioLayerForward: '前へ',
-      studioLayerBackward: '後ろへ'
+      studioLayerBackward: '後ろへ',
+      studioFlipLabel: '左右反転'
     },
     zh: {
       patchNotes: '更新日志',
@@ -1100,7 +1107,7 @@
       studioFullNote: '舞台已满(最多5人)',
       studioPickTitle: '选择要放到舞台上的角色',
       studioPickConfirm: '放到舞台上',
-      studioStageHint: '拖动角色只会移动该角色，拖动背景则只会移动背景。滚轮/双指可以缩放整个舞台。每个角色都可以单独调整大小、旋转、动作和播放速度，还可以用↑/↓按钮调整角色重叠时的前后顺序。',
+      studioStageHint: '拖动角色只会移动该角色，拖动背景则只会移动背景。滚轮/双指可以缩放整个舞台。每个角色都可以单独调整大小、旋转、动作和播放速度，还可以用↔按钮左右翻转，用↑/↓按钮调整角色重叠时的前后顺序。',
       studioSlotLoading: '加载中…',
       studioBgUpload: '设置背景图片',
       studioBgClear: '清除背景',
@@ -1121,7 +1128,8 @@
       studioBetaBodyHtml: '工作室仍是<strong>测试版功能</strong>。使用前请先了解以下内容。<ul class="beta-notice-list"><li>舞台上的角色、背景、位置和大小<strong>不会被保存。</strong>刷新或关闭页面后会回到空舞台，喜欢的画面请先用<strong>导出为PNG</strong>保存。</li><li>同时放置多个角色时，部分设备可能会出现卡顿，建议使用桌面端。</li><li>动作或部件显示可能出现偏移，仍在调整中。</li><li>功能与界面可能会不预先通知即变更。</li></ul>',
       studioBetaConfirm: '我知道了',
       studioLayerForward: '上移一层',
-      studioLayerBackward: '下移一层'
+      studioLayerBackward: '下移一层',
+      studioFlipLabel: '左右翻转'
     }
   };
 
@@ -2499,10 +2507,20 @@
     });
     entries.forEach(({slot, c})=>{
       const scale = slot.scale || 1;
-      c.skeleton.scaleX = c.studioOrigScaleX * scale;
+      const flip = !!slot.flipX;
+      // Mirroring is done by negating the skeleton's own scaleX, same trick Spine itself uses
+      // for flipping a rig — everything (meshes, attachments, bone-driven physics) mirrors for
+      // free since it all derives from this one root transform, instead of needing a separate
+      // "draw flipped" code path in the renderer.
+      c.skeleton.scaleX = c.studioOrigScaleX * scale * (flip ? -1 : 1);
       c.skeleton.scaleY = c.studioOrigScaleY * scale;
       const ob = c.studioOrigBounds;
-      const ew = ob.w*scale, eh = ob.h*scale, ex = ob.x*scale, ey = ob.y*scale;
+      const ew = ob.w*scale, eh = ob.h*scale;
+      // With scaleX negated, the artwork's local x-span [ob.x, ob.x+ob.w] renders mirrored
+      // around the skeleton's own origin, so the left edge of the flipped silhouette is at
+      // -(ob.x+ob.w)*scale rather than ob.x*scale. Using this as `ex` keeps the centering below,
+      // and c.bounds (read by drag/hit-testing/export), correct for a flipped character too.
+      const ex = (flip ? -(ob.x + ob.w) : ob.x) * scale, ey = ob.y*scale;
       const autoShiftX = -(ex + ew/2); // centers this character's own bounds on world x = 0
       const autoShiftY = -ey;          // bottom of the scaled bounds lands on the ground line
       // Manual position sliders are normalized to the character's OWN current size (e.g. 0.5 =
@@ -2803,7 +2821,7 @@
 
   async function addStudioSlot(entry, skinName){
     if (studioSlots.length >= STUDIO_MAX_SLOTS) return;
-    const slot = {id:'slot'+(++studioSlotSeq), entry, skinName, animName:null, char:null, offsetXNorm:0, offsetYNorm:0, scale:1, rotation:0, speed:1};
+    const slot = {id:'slot'+(++studioSlotSeq), entry, skinName, animName:null, char:null, offsetXNorm:0, offsetYNorm:0, scale:1, rotation:0, flipX:false, speed:1};
     studioSlots.push(slot);
     renderStudioSlots();
     initGL();
@@ -2912,6 +2930,7 @@
       slot.offsetYNorm = 0;
       slot.scale = 1;
       slot.rotation = 0;
+      slot.flipX = false;
     });
     layoutStudioSlots();
     studioCamera.panX = 0;
@@ -3042,8 +3061,25 @@
       fwdBtn.setAttribute('aria-label', t('studioLayerForward'));
       fwdBtn.disabled = idx === -1 || idx >= studioSlots.length - 1;
       fwdBtn.addEventListener('click', ()=>moveStudioSlotForward(slot.id));
+      const flipBtn = document.createElement('button');
+      flipBtn.type = 'button';
+      flipBtn.className = 'studio-slot-layer-btn studio-slot-flip-btn' + (slot.flipX ? ' active' : '');
+      flipBtn.textContent = '\u2194';
+      flipBtn.title = t('studioFlipLabel');
+      flipBtn.setAttribute('aria-label', t('studioFlipLabel'));
+      flipBtn.setAttribute('aria-pressed', slot.flipX ? 'true' : 'false');
+      flipBtn.addEventListener('click', ()=>{
+        slot.flipX = !slot.flipX;
+        // layoutStudioSlots() re-derives c.skeleton.scaleX (sign) and c.bounds from slot.flipX
+        // every time, so toggling the flag and re-laying-out is enough — no separate "apply flip"
+        // path needed. renderStudioSlots() after it just refreshes this button's active/pressed
+        // state to match.
+        layoutStudioSlots();
+        renderStudioSlots();
+      });
       layerBtns.appendChild(backBtn);
       layerBtns.appendChild(fwdBtn);
+      layerBtns.appendChild(flipBtn);
 
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
